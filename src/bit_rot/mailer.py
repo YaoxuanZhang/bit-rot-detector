@@ -369,31 +369,44 @@ Configuration:
             files_scanned: Total files scanned
             errors: List of error messages
         """
+        from .scanner import SyncResult
+
         # Send if sync success notifications enabled and files were scanned
         if files_scanned > 0 and self.config.notify_sync_success:
-            subject = f"Bit Rot Detector - {files_scanned} Files Synced"
-            body = f"""Sync operation completed.
-
-New Files Added: {files_added:,}
-Files Modified: {files_modified:,}
-Files Moved: {files_moved:,}
-Files Removed: {files_removed:,}
-Total Scanned: {files_scanned:,}
-"""
-            if errors:
-                body += f"\nErrors encountered: {len(errors)}\n"
-                body += "\n".join(errors[:10])  # Show first 10 errors
-
-            body += self.format_summary_report(
-                sync_stats={
-                    "scanned": files_scanned,
-                    "added": files_added,
-                    "modified": files_modified,
-                    "moved": files_moved,
-                    "removed": files_removed,
-                    "errors": len(errors),
-                }
+            subject = f"Bit Rot Detector - {files_scanned:,} Files Synced"
+            
+            # Create a SyncResult for the builder function
+            sync_result = SyncResult(
+                files_scanned=files_scanned,
+                files_added=files_added,
+                files_modified=files_modified,
+                files_moved=files_moved,
+                files_removed=files_removed,
+                errors=errors,
             )
+            
+            # Build body using existing section builder
+            lines = []
+            lines.append("╔" + "═" * 62 + "╗")
+            lines.append("║" + " " * 18 + "BIT ROT DETECTOR - SYNC REPORT" + " " * 13 + "║")
+            lines.append("╚" + "═" * 62 + "╝")
+            lines.append("")
+            
+            # Use existing builder function
+            lines.extend(self._build_sync_section([("Drive", sync_result)], include_drive_header=False))
+            
+            # Add error details if present
+            if errors:
+                lines.append("=" * 64)
+                lines.append("ERROR DETAILS")
+                lines.append("=" * 64)
+                lines.append("")
+                for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
+                    lines.append(f"{i}. {error}")
+                lines.append("")
+            
+            lines.append("=" * 64)
+            body = "\n".join(lines)
 
             self.send_notification(subject, body)
 
@@ -410,62 +423,97 @@ Total Scanned: {files_scanned:,}
             files_corrupted: List of corrupted file paths
             errors: List of error messages
         """
+        from .scanner import ScrubResult
+
         # Send if corrupted files found (critical) or if scrub success notifications enabled
         if files_corrupted:
             # CRITICAL: Bit rot detected
             subject = f"BIT ROT DETECTED - {len(files_corrupted)} Corrupted Files!"
-            body = f"""CRITICAL ALERT: Bit rot has been detected in {len(files_corrupted)} file(s)!
-
-IMMEDIATE ACTION REQUIRED: The following files have been corrupted and need to be restored from backup.
-
-CORRUPTED FILES (Full Paths):
-"""
+            
+            lines = []
+            lines.append("╔" + "═" * 62 + "╗")
+            lines.append("║" + " " * 10 + "CRITICAL ALERT - BIT ROT DETECTED" + " " * 18 + "║")
+            lines.append("╚" + "═" * 62 + "╝")
+            lines.append("")
+            lines.append(f"IMMEDIATE ACTION REQUIRED: {len(files_corrupted)} file(s) corrupted!")
+            lines.append("")
+            lines.append("=" * 64)
+            lines.append("CORRUPTED FILES (Full Paths)")
+            lines.append("=" * 64)
+            lines.append("")
+            
             # List all corrupted files with full paths
             for i, filepath in enumerate(files_corrupted, 1):
-                body += f"{i:4d}. {filepath}\n"
-
-            body += f"\n\nSUMMARY:\n"
-            body += f"  Total Corrupted: {len(files_corrupted):,}\n"
-            body += f"  Files Validated: {files_validated:,}\n"
-
-            if errors:
-                body += f"\nAdditional errors encountered: {len(errors)}\n"
-                body += "\n".join(errors[:5])  # Show first 5 errors
-
-            body += self.format_summary_report(
-                scrub_stats={
-                    "validated": files_validated,
-                    "corrupted": len(files_corrupted),
-                    "errors": len(errors),
-                }
-            )
+                lines.append(f"{i:4d}. {filepath}")
             
-            body += f"\n\nRECOMMENDED ACTIONS:\n"
-            body += "1. Restore corrupted files from your most recent backup\n"
-            body += "2. Verify the integrity of your storage hardware\n"
-            body += "3. Check system logs for hardware errors\n"
-            body += "4. Consider running a full disk check (e.g., fsck, chkdsk)\n"
-
+            lines.append("")
+            lines.append("=" * 64)
+            lines.append("SUMMARY")
+            lines.append("=" * 64)
+            lines.append("")
+            lines.append(f"  Total Corrupted: {len(files_corrupted):,}")
+            lines.append(f"  Files Validated: {files_validated:,}")
+            
+            # Add error details if present
+            if errors:
+                lines.append("")
+                lines.append(f"  Additional Errors: {len(errors):,}")
+                lines.append("")
+                lines.append("=" * 64)
+                lines.append("ERROR DETAILS")
+                lines.append("=" * 64)
+                lines.append("")
+                for i, error in enumerate(errors[:5], 1):  # Show first 5 errors
+                    lines.append(f"{i}. {error}")
+            
+            lines.append("")
+            lines.append("=" * 64)
+            lines.append("RECOMMENDED ACTIONS")
+            lines.append("=" * 64)
+            lines.append("")
+            lines.append("1. Restore corrupted files from your most recent backup")
+            lines.append("2. Verify the integrity of your storage hardware")
+            lines.append("3. Check system logs for hardware errors")
+            lines.append("4. Consider running a full disk check (e.g., fsck, chkdsk)")
+            lines.append("")
+            lines.append("=" * 64)
+            
+            body = "\n".join(lines)
             self.send_notification(subject, body)
 
         elif self.config.notify_scrub_success and files_validated > 0:
             # Success notification
-            subject = f"Bit Rot Detector - {files_validated} Files Validated"
-            body = f"""Scrub operation completed successfully.
-
-Files Validated: {files_validated:,}
-Corrupted Files: 0
-"""
-            if errors:
-                body += f"\nErrors encountered: {len(errors)}\n"
-
-            body += self.format_summary_report(
-                scrub_stats={
-                    "validated": files_validated,
-                    "corrupted": 0,
-                    "errors": len(errors),
-                }
+            subject = f"Bit Rot Detector - {files_validated:,} Files Validated"
+            
+            # Create a ScrubResult for the builder function
+            scrub_result = ScrubResult(
+                files_validated=files_validated,
+                files_corrupted=[],  # Empty for success case
+                errors=errors,
             )
+            
+            # Build body using existing section builder
+            lines = []
+            lines.append("╔" + "═" * 62 + "╗")
+            lines.append("║" + " " * 17 + "BIT ROT DETECTOR - SCRUB REPORT" + " " * 12 + "║")
+            lines.append("╚" + "═" * 62 + "╝")
+            lines.append("")
+            
+            # Use existing builder function
+            lines.extend(self._build_scrub_section([("Drive", scrub_result)], include_drive_header=False))
+            
+            # Add error details if present
+            if errors:
+                lines.append("=" * 64)
+                lines.append("ERROR DETAILS")
+                lines.append("=" * 64)
+                lines.append("")
+                for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
+                    lines.append(f"{i}. {error}")
+                lines.append("")
+            
+            lines.append("=" * 64)
+            body = "\n".join(lines)
 
             self.send_notification(subject, body)
 

@@ -22,9 +22,34 @@ cd /path/to/bit-rot-detector
 
 # Install dependencies with uv
 uv sync
+
+# Install development dependencies (for testing)
+uv sync --extra dev
 ```
 
+## Testing
+
+The project includes a comprehensive test suite using pytest.
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with coverage report
+uv run pytest --cov=src/bit_rot
+
+# Run specific test file
+uv run pytest tests/test_config.py -v
+
+# Run with verbose output
+uv run pytest -v
+```
+
+Test coverage reports are generated in `htmlcov/` directory.
+
 ## Configuration
+
+Configuration is managed through environment variables. A template is provided:
 
 1. Copy the example environment file:
 
@@ -32,7 +57,7 @@ uv sync
 cp .env.example .env
 ```
 
-2. Edit `.env` with your settings:
+2. Edit `.env` with your settings. See [`.env.example`](.env.example) for all available options and detailed documentation.
 
 ```bash
 # Target directory to monitor
