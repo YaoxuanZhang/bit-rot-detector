@@ -144,6 +144,8 @@ class Scanner:
                 files.remove("bitrot.db")
 
             for filename in files:
+                if self.stop_event and self.stop_event.is_set():
+                    break
                 filepath = Path(root) / filename
                 try:
                     stat = filepath.stat()
@@ -170,6 +172,10 @@ class Scanner:
         seen_db_paths = set()
 
         for current_path, (size, mtime) in current_files.items():
+            if self.stop_event and self.stop_event.is_set():
+                logger.info("Scanning interrupted (Phase 2)")
+                break
+
             if current_path in db_files:
                 # File exists in same location - check if modified
                 record = db_files[current_path]
@@ -263,6 +269,8 @@ class Scanner:
         logger.info("Phase 3: Detecting deleted files")
 
         for db_path in db_files:
+            if self.stop_event and self.stop_event.is_set():
+                break
             if db_path not in current_files and db_path not in seen_db_paths:
                 logger.info(f"Detected deletion: {db_path}")
                 db.stage_file_removal(db_path)
