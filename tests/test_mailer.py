@@ -85,13 +85,13 @@ class TestMailer:
         )
         
         lines = Mailer._build_sync_section(
-            [("Drive1", sync_result1), ("Drive2", sync_result2)],
+            [("WD_Elements", sync_result1), ("Seagate_Backup", sync_result2)],
             include_drive_header=True
         )
         
         # Should show drive headers
-        assert any("Drive1" in line for line in lines)
-        assert any("Drive2" in line for line in lines)
+        assert any("WD_Elements" in line for line in lines)
+        assert any("Seagate_Backup" in line for line in lines)
         # Should show totals
         assert any("SYNC TOTALS" in line for line in lines)
         assert any("300" in line for line in lines)  # Total scanned

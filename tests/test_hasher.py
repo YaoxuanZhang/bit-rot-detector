@@ -22,7 +22,7 @@ class TestHasher:
         test_file.write_text("Hello, World!")
         
         # Hash the file
-        file_hash = hasher.hash_file(test_file)
+        file_hash = hasher.compute_hash(test_file)
         
         # Verify hash is not empty
         assert file_hash is not None
@@ -35,8 +35,8 @@ class TestHasher:
         test_file = temp_dir / "test.txt"
         test_file.write_text("Test content")
         
-        hash1 = hasher.hash_file(test_file)
-        hash2 = hasher.hash_file(test_file)
+        hash1 = hasher.compute_hash(test_file)
+        hash2 = hasher.compute_hash(test_file)
         
         assert hash1 == hash2
 
@@ -48,8 +48,8 @@ class TestHasher:
         file1.write_text("Content A")
         file2.write_text("Content B")
         
-        hash1 = hasher.hash_file(file1)
-        hash2 = hasher.hash_file(file2)
+        hash1 = hasher.compute_hash(file1)
+        hash2 = hasher.compute_hash(file2)
         
         assert hash1 != hash2
 
@@ -58,7 +58,7 @@ class TestHasher:
         nonexistent = temp_dir / "nonexistent.txt"
         
         with pytest.raises(FileNotFoundError):
-            hasher.hash_file(nonexistent)
+            hasher.compute_hash(nonexistent)
 
     def test_hash_file_large_file(self, hasher: Hasher, temp_dir: Path):
         """Test hashing larger file (tests chunked reading)."""
@@ -66,7 +66,7 @@ class TestHasher:
         large_file = temp_dir / "large.bin"
         large_file.write_bytes(b"X" * (10 * 1024 * 1024))
         
-        file_hash = hasher.hash_file(large_file)
+        file_hash = hasher.compute_hash(large_file)
         
         assert file_hash is not None
         assert len(file_hash) > 0
@@ -76,7 +76,7 @@ class TestHasher:
         empty_file = temp_dir / "empty.txt"
         empty_file.write_text("")
         
-        file_hash = hasher.hash_file(empty_file)
+        file_hash = hasher.compute_hash(empty_file)
         
         # Empty file should still produce a hash
         assert file_hash is not None
@@ -87,7 +87,7 @@ class TestHasher:
         binary_file = temp_dir / "binary.bin"
         binary_file.write_bytes(bytes(range(256)))
         
-        file_hash = hasher.hash_file(binary_file)
+        file_hash = hasher.compute_hash(binary_file)
         
         assert file_hash is not None
         assert len(file_hash) > 0
