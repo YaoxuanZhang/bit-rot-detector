@@ -1,6 +1,7 @@
 """Logging configuration for Bit Rot Detector."""
 
 import logging
+import sys
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -31,6 +32,14 @@ def setup_logging(log_retention_days: int = 7) -> None:
     # Create logs directory
     logs_dir = Path("logs")
     logs_dir.mkdir(exist_ok=True)
+
+    # Force UTF-8 encoding for console output (fixes Windows Unicode errors)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
 
     # Generate timestamped log filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -63,7 +72,7 @@ def setup_logging(log_retention_days: int = 7) -> None:
     root_logger.addHandler(console_handler)
 
     # File handler (DEBUG and above) - timestamped file
-    file_handler = logging.FileHandler(log_file)
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(log_format, date_format)
     file_handler.setFormatter(file_formatter)
