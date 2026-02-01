@@ -114,112 +114,89 @@ class TestMailer:
         assert any("SCRUB RESULTS" in line for line in lines)
 
     @patch("bit_rot.mailer.smtplib.SMTP")
-    def test_send_sync_notification_enabled(self, mock_smtp, mailer: Mailer):
-        """Test sync notification when enabled."""
+    def test_send_unified_report_success_enabled(self, mock_smtp, mailer: Mailer):
+        """Test unified report when success (and notification enabled)."""
         mock_server = Mock()
         mock_smtp.return_value.__enter__.return_value = mock_server
 
-        mailer.send_sync_notification(
-            files_added=10,
-            files_modified=5,
-            files_moved=2,
-            files_removed=1,
-            files_scanned=100,
+        # Ensure enabled
+        mailer.config.notify_on_success = True
+
+        mailer.send_unified_report(
+            sync_results=[],
+            scrub_results=[],
+            drive_health_results=[],
             errors=[],
+            duration_seconds=10.0,
         )
 
-        # Should send email
         mock_server.send_message.assert_called_once()
 
     @patch("bit_rot.mailer.smtplib.SMTP")
-    def test_send_sync_notification_disabled(
-        self, mock_smtp, mock_email_config: EmailConfig
-    ):
-        """Test sync notification when disabled."""
-        # Disable sync notifications
-        config = EmailConfig(
-            smtp_host=mock_email_config.smtp_host,
-            smtp_port=mock_email_config.smtp_port,
-            smtp_username=mock_email_config.smtp_username,
-            smtp_password=mock_email_config.smtp_password,
-            sender=mock_email_config.sender,
-            recipient=mock_email_config.recipient,
-            notify_sync_success=False,  # Disabled
-            notify_scrub_success=mock_email_config.notify_scrub_success,
-            notify_critical_failures=mock_email_config.notify_critical_failures,
-        )
-        mailer = Mailer(config)
+    def test_send_unified_report_success_disabled(self, mock_smtp, mailer: Mailer):
+        """Test unified report skipped when success (and notification disabled)."""
+        mock_server = Mock()
+        mock_smtp.return_value.__enter__.return_value = mock_server
 
-        mailer.send_sync_notification(
-            files_added=10,
-            files_modified=5,
-            files_moved=2,
-            files_removed=1,
-            files_scanned=100,
+        # Disable success notifications
+        mailer.config.notify_on_success = False
+
+        mailer.send_unified_report(
+            sync_results=[],
+            scrub_results=[],
+            drive_health_results=[],
             errors=[],
+            duration_seconds=10.0,
         )
 
-        # Should not send email
+        # Should skip
         mock_smtp.assert_not_called()
 
     @patch("bit_rot.mailer.smtplib.SMTP")
-    def test_send_scrub_notification_bit_rot_detected(self, mock_smtp, mailer: Mailer):
-        """Test scrub notification when bit rot detected (always sends)."""
+    def test_send_unified_report_failure_always_sends(self, mock_smtp, mailer: Mailer):
+        """Test unified report ALWAYS sends on failure even if success-notify disabled."""
         mock_server = Mock()
         mock_smtp.return_value.__enter__.return_value = mock_server
 
-        mailer.send_scrub_notification(
-            files_validated=100,
-            files_corrupted=["/path/to/corrupted1.txt", "/path/to/corrupted2.txt"],
-            errors=[],
+        # Disable success notifications
+        mailer.config.notify_on_success = False
+
+        # Simulate error
+        mailer.send_unified_report(
+            sync_results=[],
+            scrub_results=[],
+            drive_health_results=[],
+            errors=["Critical DB failure"],
+            duration_seconds=10.0,
         )
 
-        # Should always send when bit rot detected
+        # Should send because of error
         mock_server.send_message.assert_called_once()
-        # Subject should indicate bit rot
+
+    @patch("bit_rot.mailer.smtplib.SMTP")
+    def test_send_unified_report_bit_rot_always_sends(self, mock_smtp, mailer: Mailer):
+        """Test unified report ALWAYS sends on bit rot detection."""
+        mock_server = Mock()
+        mock_smtp.return_value.__enter__.return_value = mock_server
+
+        # Disable success notifications
+        mailer.config.notify_on_success = False
+
+        scrub_result = ScrubResult(
+            files_validated=10, files_corrupted=["bad_file.txt"], errors=[]
+        )
+
+        # Simulate bit rot
+        mailer.send_unified_report(
+            sync_results=[],
+            scrub_results=[("Drive1", scrub_result)],
+            drive_health_results=[],
+            errors=[],
+            duration_seconds=10.0,
+        )
+
+        # Should send because of bit rot
+        mock_server.send_message.assert_called_once()
         call_args = mock_server.send_message.call_args
         message = call_args[0][0]
         assert "BIT ROT DETECTED" in message["Subject"]
-
-    @patch("bit_rot.mailer.smtplib.SMTP")
-    def test_send_scrub_notification_success_enabled(self, mock_smtp, mailer: Mailer):
-        """Test scrub success notification when enabled."""
-        mock_server = Mock()
-        mock_smtp.return_value.__enter__.return_value = mock_server
-
-        mailer.send_scrub_notification(
-            files_validated=100,
-            files_corrupted=[],
-            errors=[],
-        )
-
-        # Should send email
-        mock_server.send_message.assert_called_once()
-
-    @patch("bit_rot.mailer.smtplib.SMTP")
-    def test_send_scrub_notification_success_disabled(
-        self, mock_smtp, mock_email_config: EmailConfig
-    ):
-        """Test scrub success notification when disabled."""
-        # Disable scrub success notifications
-        config = EmailConfig(
-            smtp_host=mock_email_config.smtp_host,
-            smtp_port=mock_email_config.smtp_port,
-            smtp_username=mock_email_config.smtp_username,
-            smtp_password=mock_email_config.smtp_password,
-            sender=mock_email_config.sender,
-            recipient=mock_email_config.recipient,
-            notify_sync_success=mock_email_config.notify_sync_success,
-            notify_scrub_success=False,  # Disabled
-            notify_critical_failures=mock_email_config.notify_critical_failures,
-        )
-        mailer = Mailer(config)
-
-        mailer.send_scrub_notification(
-            files_validated=100,
-            files_corrupted=[],
-            errors=[],
-        )
-
-        # Should not send email
-        mock_smtp.assert_not_called()

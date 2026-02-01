@@ -35,9 +35,7 @@ def mock_email_config() -> EmailConfig:
         smtp_password="test_pass",
         sender="test@example.com",
         recipient="recipient@example.com",
-        notify_sync_success=True,
-        notify_scrub_success=True,
-        notify_critical_failures=True,
+        notify_on_success=True,
     )
 
 

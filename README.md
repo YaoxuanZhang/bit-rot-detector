@@ -5,8 +5,11 @@ Production-grade utility for detecting file corruption (bit rot) using BLAKE3 ha
 ## Features
 
 - **BLAKE3 Hashing**: Fast, cryptographically secure file integrity verification
+- **Multi-Drive Support**: Concurrent processing of multiple drives with configurable worker threads
 - **Atomic Transactions**: All database updates happen atomically at the end of successful runs
 - **Intelligent Move Detection**: Detects relocated files by matching size/mtime/hash, preserving scrub history
+- **Unified Reporting**: Single email report gathering stats, errors, and health metrics from all drives
+- **Drive Health Monitoring**: Tracks disk usage and SMART status (temperature, overall health)
 - **Configurable Scrubbing**: Verify a configurable percentage of files at daily/weekly/monthly intervals
 - **SMTP2GO Notifications**: Email alerts for new files, successful scrubs, and critical failures
 - **Canary Protection**: Prevents mass-deletion logic on unmounted drives
@@ -60,8 +63,14 @@ cp .env.example .env
 2. Edit `.env` with your settings. See [`.env.example`](.env.example) for all available options and detailed documentation.
 
 ```bash
-# Target directory to monitor
+# Target directory(ies) to monitor
+# Single drive:
 TARGET_DIRECTORY=/path/to/monitor
+# Multiple drives (comma or colon separated):
+# TARGET_DIRECTORY=/path/to/drive1,/path/to/drive2
+
+# Performance
+MAX_WORKERS=4                 # Max concurrent workers for multi-drive processing
 
 ### Email Notifications
 
@@ -76,9 +85,8 @@ SMTP_SENDER=sender@example.com
 SMTP_RECIPIENT=recipient@example.com
 
 # Notification Preferences
-NOTIFY_SYNC_SUCCESS=true         # Email after sync operations (shows total files synced)
-NOTIFY_SCRUB_SUCCESS=false       # Email after successful scrub operations
-NOTIFY_CRITICAL_FAILURES=true   # Email on critical failures (bit rot, canary)
+# Notification Preferences
+NOTIFY_ON_SUCCESS=true         # Send email on success (failures always sent)
 
 # Scrub configuration
 SCRUB_PERCENTAGE=1.0          # 0.1 to 100.0
@@ -124,7 +132,7 @@ uv run bit-rot-detector --scrub
 
 ### Run Both (Default)
 
-Run sync followed by scrub:
+Run sync followed by scrub across all configured drives:
 
 ```bash
 uv run bit-rot-detector
@@ -134,12 +142,24 @@ uv run bit-rot-detector
 
 ### The "Sync & Scrub" Pattern
 
-1. **Canary Check**: Verifies `.bitrot-canary` exists before any operations
+1. **Canary Check**: Verifies `.bitrot-canary` exists on each drive before any operations
 2. **Phase 1 - Sync**: Walks directory tree, records file metadata (size, mtime, hash)
 3. **Phase 2 - Modification Detection**: Compares size/mtime with database, re-hashes only changed files
 4. **Phase 3 - Move Detection**: Identifies relocated files by matching size/mtime, then verifying hash
 5. **Phase 4 - Deletion Detection**: Removes database entries for files not seen in current session
 6. **Phase 5 - Scrubbing**: Re-verifies a configurable percentage of files (oldest first) to detect bit rot
+
+### Multi-Drive Processing
+
+Drives are processed concurrently using a thread pool. The number of concurrent workers is configurable via `MAX_WORKERS`. Each drive is handled independently with its own database connection and transaction.
+
+### Unified Reporting
+
+A single email report is sent at the end of the program run, aggregating results from all drives. The report includes:
+- **Drive Health**: Disk usage and SMART status (temperature, health) for each drive
+- **Sync Stats**: Files scanned, added, modified, moved, and removed
+- **Scrub Stats**: Files validated and corruption detected
+- **Errors**: Any errors encountered during processing
 
 ### Atomic Transactions
 
@@ -195,7 +215,7 @@ logs/bitrot_20260130_023001.log
 
 ## Database Schema
 
-SQLite database (`bitrot.db`) with a single `files` table:
+SQLite database (`bitrot.db`) located in the root of each monitored directory with a single `files` table:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -228,11 +248,14 @@ SQLite database (`bitrot.db`) with a single `files` table:
 
 Email notifications are sent based on your configuration:
 
-- **New Files** (`NOTIFY_NEW_FILES=true`): When new files are added during sync
-- **Scrub Success** (`NOTIFY_SCRUB_SUCCESS=true`): When scrub completes successfully
-- **Critical Failures** (`NOTIFY_CRITICAL_FAILURES=true`): When bit rot is detected or critical errors occur
+- **Success** (`NOTIFY_ON_SUCCESS=true`): Report sent when operation completes without issues
+- **Failure/Warning** (Always Sent): Report sent when bit rot is detected or errors occur
 
-All emails include a summary statistics report.
+All emails are sent as a **Unified Report** containing:
+1. Overall Status
+2. Drive Health Metrics (Usage, Temp, SMART)
+3. Aggregated Statistics
+4. Detailed Error Logs (if any)
 
 ## License
 

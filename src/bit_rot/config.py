@@ -69,11 +69,7 @@ def load_config() -> Config:
         smtp_password=os.getenv("SMTP_PASSWORD", ""),
         sender=os.getenv("SMTP_SENDER", ""),
         recipient=os.getenv("SMTP_RECIPIENT", ""),
-        notify_sync_success=os.getenv("NOTIFY_SYNC_SUCCESS", "false").lower() == "true",
-        notify_scrub_success=os.getenv("NOTIFY_SCRUB_SUCCESS", "false").lower()
-        == "true",
-        notify_critical_failures=os.getenv("NOTIFY_CRITICAL_FAILURES", "true").lower()
-        == "true",
+        notify_on_success=os.getenv("NOTIFY_ON_SUCCESS", "true").lower() == "true",
     )
 
     # Scrub configuration

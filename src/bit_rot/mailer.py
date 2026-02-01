@@ -20,9 +20,7 @@ class EmailConfig:
     smtp_password: str
     sender: str
     recipient: str
-    notify_sync_success: bool
-    notify_scrub_success: bool
-    notify_critical_failures: bool
+    notify_on_success: bool
 
 
 class Mailer:
@@ -404,5 +402,10 @@ Configuration:
                     )
                     subject = f"Bit Rot Detector - {total_files:,} Files Validated"
 
-        # Always send unified report
+        # Check if we should send the email
+        if status == "SUCCESS" and not self.config.notify_on_success:
+            logger.info("Skipping email notification (success notification disabled)")
+            return
+
+        # Always send unified report for warnings/failures or if success notification enabled
         self.send_notification(subject, body)

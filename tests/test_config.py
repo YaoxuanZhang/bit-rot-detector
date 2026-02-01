@@ -25,9 +25,7 @@ class TestConfig:
         monkeypatch.setenv("SMTP_PASSWORD", "password123")
         monkeypatch.setenv("SMTP_SENDER", "sender@example.com")
         monkeypatch.setenv("SMTP_RECIPIENT", "recipient@example.com")
-        monkeypatch.setenv("NOTIFY_SYNC_SUCCESS", "true")
-        monkeypatch.setenv("NOTIFY_SCRUB_SUCCESS", "false")
-        monkeypatch.setenv("NOTIFY_CRITICAL_FAILURES", "true")
+        monkeypatch.setenv("NOTIFY_ON_SUCCESS", "true")
         monkeypatch.setenv("SCRUB_PERCENTAGE", "5.0")
         monkeypatch.setenv("SCRUB_FREQUENCY", "weekly")
         monkeypatch.setenv("LOG_RETENTION_DAYS", "14")
@@ -41,8 +39,7 @@ class TestConfig:
         assert config.target_paths[0] == test_target
         assert config.email_config.smtp_host == "mail.smtp2go.com"
         assert config.email_config.smtp_port == 587
-        assert config.email_config.notify_sync_success is True
-        assert config.email_config.notify_scrub_success is False
+        assert config.email_config.notify_on_success is True
         assert config.scrub_percentage == 5.0
         assert config.scrub_frequency == "weekly"
         assert config.log_retention_days == 14
@@ -141,9 +138,10 @@ class TestConfig:
             "SMTP_PASSWORD",
             "SMTP_SENDER",
             "SMTP_RECIPIENT",
-            "NOTIFY_SYNC_SUCCESS",
-            "NOTIFY_SCRUB_SUCCESS",
-            "NOTIFY_CRITICAL_FAILURES",
+            "NOTIFY_ON_SUCCESS",
+            "NOTIFY_SYNC_SUCCESS",  # Old logic cleaning
+            "NOTIFY_SCRUB_SUCCESS",  # Old logic cleaning
+            "NOTIFY_CRITICAL_FAILURES",  # Old logic cleaning
             "SCRUB_PERCENTAGE",
             "SCRUB_FREQUENCY",
             "LOG_RETENTION_DAYS",
@@ -156,9 +154,7 @@ class TestConfig:
         # Check defaults
         assert config.email_config.smtp_host == "mail.smtp2go.com"
         assert config.email_config.smtp_port == 587
-        assert config.email_config.notify_sync_success is False
-        assert config.email_config.notify_scrub_success is False
-        assert config.email_config.notify_critical_failures is True
+        assert config.email_config.notify_on_success is True  # Default is True
         assert config.scrub_percentage == 1.0
         assert config.scrub_frequency == "daily"
         assert config.log_retention_days == 7
