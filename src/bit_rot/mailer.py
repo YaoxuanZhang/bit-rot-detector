@@ -120,6 +120,32 @@ Configuration:
             return f"{seconds} seconds"
 
     @staticmethod
+    def _build_header(title: str) -> list[str]:
+        """Build a header section for emails (24 chars for mobile).
+        
+        Args:
+            title: Header title text
+            
+        Returns:
+            List of header lines
+        """
+        return [
+            "=" * 24,
+            title,
+            "=" * 24,
+            "",
+        ]
+    
+    @staticmethod
+    def _build_separator() -> str:
+        """Build a separator line for emails (24 chars for mobile).
+        
+        Returns:
+            Separator string
+        """
+        return "=" * 24
+
+    @staticmethod
     def _build_sync_section(
         sync_results: list[tuple[str, "SyncResult"]],
         include_drive_header: bool = True
@@ -387,11 +413,7 @@ Configuration:
             
             # Build body using existing section builder
             lines = []
-            lines.append("=" * 64)
-            lines.append("BIT ROT DETECTOR - SYNC REPORT")
-            lines.append("=" * 64)
-            lines.append("")
-            
+            lines.extend(self._build_header("BIT ROT - SYNC"))            
             # Use existing builder function
             lines.extend(self._build_sync_section([("Drive", sync_result)], include_drive_header=False))
             
@@ -447,9 +469,9 @@ Configuration:
                 lines.append(f"{i:4d}. {filepath}")
             
             lines.append("")
-            lines.append("=" * 64)
+            lines.append(Mailer._build_separator())
             lines.append("SUMMARY")
-            lines.append("=" * 64)
+            lines.append(Mailer._build_separator())
             lines.append("")
             lines.append(f"  Total Corrupted: {len(files_corrupted):,}")
             lines.append(f"  Files Validated: {files_validated:,}")
@@ -459,17 +481,17 @@ Configuration:
                 lines.append("")
                 lines.append(f"  Additional Errors: {len(errors):,}")
                 lines.append("")
-                lines.append("=" * 64)
+                lines.append(Mailer._build_separator())
                 lines.append("ERROR DETAILS")
-                lines.append("=" * 64)
+                lines.append(Mailer._build_separator())
                 lines.append("")
                 for i, error in enumerate(errors[:5], 1):  # Show first 5 errors
                     lines.append(f"{i}. {error}")
             
             lines.append("")
-            lines.append("=" * 64)
+            lines.append(Mailer._build_separator())
             lines.append("RECOMMENDED ACTIONS")
-            lines.append("=" * 64)
+            lines.append(Mailer._build_separator())
             lines.append("")
             lines.append("1. Restore corrupted files from your most recent backup")
             lines.append("2. Verify the integrity of your storage hardware")
@@ -494,11 +516,7 @@ Configuration:
             
             # Build body using existing section builder
             lines = []
-            lines.append("=" * 64)
-            lines.append("BIT ROT DETECTOR - SCRUB REPORT")
-            lines.append("=" * 64)
-            lines.append("")
-            
+            lines.extend(self._build_header("BIT ROT - SCRUB"))            
             # Use existing builder function
             lines.extend(self._build_scrub_section([("Drive", scrub_result)], include_drive_header=False))
             

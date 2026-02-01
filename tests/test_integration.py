@@ -112,10 +112,10 @@ def scenario_3_modifications():
     input("\nPress Enter to continue to next scenario...")
 
 
-def scenario_3b_file_moves():
-    """Scenario 3b: File moves detected."""
+def scenario_4_file_moves():
+    """Scenario 4: File moves detected."""
     print("\n" + "=" * 80)
-    print("SCENARIO 3B: File Moves Detected")
+    print("SCENARIO 4: File Moves Detected")
     print("=" * 80)
     
     test_dir = setup_test_directory()
@@ -143,10 +143,10 @@ def scenario_3b_file_moves():
     input("\nPress Enter to continue to next scenario...")
 
 
-def scenario_3c_file_removals():
-    """Scenario 3c: File removals detected."""
+def scenario_5_file_removals():
+    """Scenario 5: File removals detected."""
     print("\n" + "=" * 80)
-    print("SCENARIO 3C: File Removals Detected")
+    print("SCENARIO 5: File Removals Detected")
     print("=" * 80)
     
     test_dir = setup_test_directory()
@@ -171,10 +171,10 @@ def scenario_3c_file_removals():
     input("\nPress Enter to continue to next scenario...")
 
 
-def scenario_4_scrub_success():
-    """Scenario 4: Successful scrub operation."""
+def scenario_6_scrub_success():
+    """Scenario 6: Successful scrub operation."""
     print("\n" + "=" * 80)
-    print("SCENARIO 4: Successful Scrub Operation")
+    print("SCENARIO 6: Successful Scrub Operation")
     print("=" * 80)
     
     test_dir = setup_test_directory()
@@ -195,10 +195,10 @@ def scenario_4_scrub_success():
     input("\nPress Enter to continue to next scenario...")
 
 
-def scenario_5_bit_rot():
-    """Scenario 5: Bit rot detection."""
+def scenario_7_bit_rot():
+    """Scenario 7: Bit rot detection."""
     print("\n" + "=" * 80)
-    print("SCENARIO 5: BIT ROT DETECTION (Simulated)")
+    print("SCENARIO 7: BIT ROT DETECTION (Simulated)")
     print("=" * 80)
     
     test_dir = setup_test_directory()
@@ -237,10 +237,10 @@ def scenario_5_bit_rot():
     input("\nPress Enter to continue to next scenario...")
 
 
-def scenario_6_canary_failure():
-    """Scenario 6: Canary check failure."""
+def scenario_8_canary_failure():
+    """Scenario 8: Canary check failure."""
     print("\n" + "=" * 80)
-    print("SCENARIO 6: Canary Check Failure")
+    print("SCENARIO 8: Canary Check Failure")
     print("=" * 80)
     
     test_dir = setup_test_directory()
@@ -265,6 +265,84 @@ def scenario_6_canary_failure():
     input("\nPress Enter to finish...")
 
 
+def scenario_9_multi_drive():
+    """Scenario 9: Multiple drives with different results."""
+    print("\n" + "=" * 80)
+    print("SCENARIO 9: Multiple Drives (Sync + Scrub)")
+    print("=" * 80)
+    
+    # Create two test directories
+    test_dir1 = Path("test_email_scenarios/drive1")
+    test_dir2 = Path("test_email_scenarios/drive2")
+    
+    # Clean up if exists
+    if Path("test_email_scenarios").exists():
+        shutil.rmtree("test_email_scenarios")
+    
+    test_dir1.mkdir(parents=True)
+    test_dir2.mkdir(parents=True)
+    
+    # Create canaries
+    (test_dir1 / ".bitrot-canary").touch()
+    (test_dir2 / ".bitrot-canary").touch()
+    
+    # Create files on drive 1
+    print("\nCreating files on Drive 1 (WD_Elements)...")
+    for i in range(8):
+        (test_dir1 / f"doc_{i}.txt").write_text(f"Drive 1 content {i}\n" * 100)
+    
+    # Create files on drive 2
+    print("Creating files on Drive 2 (Seagate_Backup)...")
+    for i in range(5):
+        (test_dir2 / f"backup_{i}.txt").write_text(f"Drive 2 content {i}\n" * 100)
+    
+    print("Running initial sync on both drives...")
+    env = os.environ.copy()
+    env["TARGET_DIRECTORY"] = f"{test_dir1.absolute()}:{test_dir2.absolute()}"
+    
+    result = subprocess.run(
+        "uv run bit-rot-detector --sync",
+        shell=True,
+        cwd=Path.cwd(),
+        env=env,
+        capture_output=True,
+        text=True
+    )
+    print(result.stdout)
+    if result.stderr:
+        print("STDERR:", result.stderr)
+    
+    # Modify some files on drive 1
+    print("\nModifying 3 files on Drive 1...")
+    for i in range(3):
+        (test_dir1 / f"doc_{i}.txt").write_text(f"MODIFIED Drive 1 content {i}\n" * 120)
+    
+    # Remove some files from drive 2
+    print("Removing 2 files from Drive 2...")
+    for i in range(2):
+        (test_dir2 / f"backup_{i}.txt").unlink()
+    
+    print("Running sync + scrub on both drives...")
+    result = subprocess.run(
+        "uv run bit-rot-detector --sync --scrub",
+        shell=True,
+        cwd=Path.cwd(),
+        env=env,
+        capture_output=True,
+        text=True
+    )
+    print(result.stdout)
+    if result.stderr:
+        print("STDERR:", result.stderr)
+    
+    print("\nCheck your email:")
+    print("  - Subject should show combined totals from both drives")
+    print("  - Body should show separate sections for each drive")
+    print("  - Drive 1: 3 modified files, X files scrubbed")
+    print("  - Drive 2: 2 removed files, Y files scrubbed")
+    input("\nPress Enter to finish...")
+
+
 def main():
     """Run selected test scenarios."""
     print("\n")
@@ -286,11 +364,12 @@ def main():
         "1": ("Test Email", scenario_1_test_email),
         "2": ("New Files Detected", scenario_2_new_files),
         "3": ("File Modifications", scenario_3_modifications),
-        "4": ("File Moves", scenario_3b_file_moves),
-        "5": ("File Removals", scenario_3c_file_removals),
-        "6": ("Successful Scrub", scenario_4_scrub_success),
-        "7": ("Bit Rot Detection", scenario_5_bit_rot),
-        "8": ("Canary Failure", scenario_6_canary_failure),
+        "4": ("File Moves", scenario_4_file_moves),
+        "5": ("File Removals", scenario_5_file_removals),
+        "6": ("Successful Scrub", scenario_6_scrub_success),
+        "7": ("Bit Rot Detection", scenario_7_bit_rot),
+        "8": ("Canary Failure", scenario_8_canary_failure),
+        "9": ("Multi-Drive Sync+Scrub", scenario_9_multi_drive),
     }
     
     print("\nAvailable test scenarios:")
