@@ -36,7 +36,8 @@ def process_drive(
     Returns:
         Tuple of (drive_name, drive_health, sync_result, scrub_result, error_message)
     """
-    drive_name = target_path.name
+    target_path = target_path.resolve()
+    drive_name = target_path.name or str(target_path)
     # Set thread context for logging
     thread_local.directory = drive_name
     logger.info("Starting processing")

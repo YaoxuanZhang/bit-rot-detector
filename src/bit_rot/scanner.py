@@ -68,6 +68,22 @@ class Scanner:
 
         return exists
 
+    @staticmethod
+    def _ensure_long_path(path: Path) -> Path:
+        """Ensure path uses long path prefix on Windows to bypass 260 char limit.
+
+        Args:
+            path: Path to check
+
+        Returns:
+            Path with long path prefix if on Windows
+        """
+        if os.name == "nt":
+            abs_path = str(path.resolve())
+            if not abs_path.startswith("\\\\?\\"):
+                return Path(f"\\\\?\\{abs_path}")
+        return path
+
     def sync_directory(self, root_path: Path, db: Database) -> SyncResult:
         """Sync directory with database (Phases 1-3).
 
@@ -82,6 +98,9 @@ class Scanner:
         Returns:
             SyncResult with operation statistics
         """
+        # Ensure we can handle long paths on Windows
+        root_path = self._ensure_long_path(root_path)
+
         logger.info(f"Starting sync operation for: {root_path}")
         session_start = datetime.now().isoformat()
 
