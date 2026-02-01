@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from .database import Database
-from .mailer import Mailer
+from .drive_monitor import DriveHealth, get_drive_health
 from .scanner import Scanner, ScrubResult, SyncResult
 
 logger = logging.getLogger(__name__)
@@ -32,10 +32,13 @@ def process_drive(
         scrub_frequency: Scrub frequency setting
 
     Returns:
-        Tuple of (drive_name, sync_result, scrub_result, error_message)
+        Tuple of (drive_name, drive_health, sync_result, scrub_result, error_message)
     """
     drive_name = target_path.name
     logger.info(f"[{drive_name}] Starting processing")
+
+    # Collect drive health first (before canary check)
+    drive_health = get_drive_health(target_path)
 
     db = None
     sync_result = None
@@ -46,7 +49,7 @@ def process_drive(
         if not scanner.check_canary(target_path):
             error_msg = f"[{drive_name}] Canary check failed: .bitrot-canary not found in {target_path}"
             logger.critical(error_msg)
-            return (drive_name, None, None, error_msg)
+            return (drive_name, drive_health, None, None, error_msg)
 
         # Initialize database
         db_path = target_path / "bitrot.db"
@@ -75,12 +78,12 @@ def process_drive(
             )
 
         logger.info(f"[{drive_name}] Processing completed successfully")
-        return (drive_name, sync_result, scrub_result, None)
+        return (drive_name, drive_health, sync_result, scrub_result, None)
 
     except Exception as e:
         error_msg = f"[{drive_name}] Processing failed: {e}"
         logger.critical(error_msg, exc_info=True)
-        return (drive_name, None, None, error_msg)
+        return (drive_name, drive_health, None, None, error_msg)
     finally:
         if db:
             db.close()
@@ -89,21 +92,23 @@ def process_drive(
 def process_drives_concurrently(
     target_paths: list[Path],
     scanner: Scanner,
-    mailer: Mailer,
     run_sync_op: bool,
     run_scrub_op: bool,
     scrub_percentage: float,
     scrub_frequency: str,
     max_workers: int,
 ) -> tuple[
-    list[tuple[str, SyncResult]], list[tuple[str, ScrubResult]], list[str], float
+    list[tuple[str, SyncResult]],
+    list[tuple[str, ScrubResult]],
+    list[DriveHealth],
+    list[str],
+    float,
 ]:
     """Process multiple drives concurrently.
 
     Args:
         target_paths: List of drive paths to process
         scanner: Scanner instance
-        mailer: Mailer instance for notifications
         run_sync_op: Whether to run sync operation
         run_scrub_op: Whether to run scrub operation
         scrub_percentage: Percentage of files to scrub
@@ -111,11 +116,12 @@ def process_drives_concurrently(
         max_workers: Maximum number of concurrent workers
 
     Returns:
-        Tuple of (sync_results, scrub_results, errors, duration_seconds)
+        Tuple of (sync_results, scrub_results, drive_health_results, errors, duration_seconds)
     """
     start_time = time.time()
     all_sync_results = []
     all_scrub_results = []
+    all_drive_health = []
     errors = []
 
     # Determine worker count (allocate one worker per drive up to MAX_WORKERS)
@@ -140,27 +146,23 @@ def process_drives_concurrently(
 
         # Collect results as they complete
         for future in as_completed(futures):
-            drive_name, sync_result, scrub_result, error = future.result()
+            drive_name, drive_health, sync_result, scrub_result, error = future.result()
+
+            # Always collect drive health
+            all_drive_health.append(drive_health)
 
             if error:
                 errors.append(error)
-                # Send immediate error notification
-                mailer.send_error_notification(error)
             else:
                 if sync_result:
                     all_sync_results.append((drive_name, sync_result))
                 if scrub_result:
                     all_scrub_results.append((drive_name, scrub_result))
-                    # Check for bit rot - send immediate critical alert
+                    # Log bit rot detection
                     if scrub_result.files_corrupted:
                         logger.critical(
                             f"BIT ROT DETECTED on {drive_name}: {len(scrub_result.files_corrupted)} corrupted files"
                         )
-                        mailer.send_scrub_notification(
-                            files_validated=scrub_result.files_validated,
-                            files_corrupted=scrub_result.files_corrupted,
-                            errors=scrub_result.errors,
-                        )
 
     duration = time.time() - start_time
-    return all_sync_results, all_scrub_results, errors, duration
+    return all_sync_results, all_scrub_results, all_drive_health, errors, duration

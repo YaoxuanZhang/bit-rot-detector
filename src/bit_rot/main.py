@@ -87,11 +87,10 @@ def main() -> int:
         run_scrub_op = args.scrub or not args.sync
 
         # Process drives concurrently
-        all_sync_results, all_scrub_results, errors, duration = (
+        all_sync_results, all_scrub_results, all_drive_health, errors, duration = (
             process_drives_concurrently(
                 target_paths=config.target_paths,
                 scanner=scanner,
-                mailer=mailer,
                 run_sync_op=run_sync_op,
                 run_scrub_op=run_scrub_op,
                 scrub_percentage=config.scrub_percentage,
@@ -100,37 +99,17 @@ def main() -> int:
             )
         )
 
-        # Send consolidated email if no errors and no bit rot
-        has_bit_rot = any(len(r.files_corrupted) > 0 for _, r in all_scrub_results)
+        # Always send unified report (one email per program run)
+        mailer.send_unified_report(
+            sync_results=all_sync_results,
+            scrub_results=all_scrub_results,
+            drive_health_results=all_drive_health,
+            errors=errors,
+            duration_seconds=duration,
+        )
 
-        if not errors and not has_bit_rot and (all_sync_results or all_scrub_results):
-            # Send consolidated report
-            if run_sync_op and run_scrub_op and all_sync_results and all_scrub_results:
-                # Both operations ran - send consolidated report
-                logger.info("Sending consolidated report")
-                mailer.send_consolidated_report(
-                    all_sync_results, all_scrub_results, duration
-                )
-            else:
-                # Only one operation ran - send individual notifications
-                for drive_name, sync_result in all_sync_results:
-                    mailer.send_sync_notification(
-                        files_added=sync_result.files_added,
-                        files_modified=sync_result.files_modified,
-                        files_moved=sync_result.files_moved,
-                        files_removed=sync_result.files_removed,
-                        files_scanned=sync_result.files_scanned,
-                        errors=sync_result.errors,
-                    )
-                for drive_name, scrub_result in all_scrub_results:
-                    if (
-                        not scrub_result.files_corrupted
-                    ):  # Only send if not already sent as critical
-                        mailer.send_scrub_notification(
-                            files_validated=scrub_result.files_validated,
-                            files_corrupted=scrub_result.files_corrupted,
-                            errors=scrub_result.errors,
-                        )
+        # Determine exit code
+        has_bit_rot = any(len(r.files_corrupted) > 0 for _, r in all_scrub_results)
 
         if errors:
             logger.warning(

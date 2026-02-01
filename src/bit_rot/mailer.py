@@ -266,290 +266,143 @@ Configuration:
 
         return lines
 
-    def send_consolidated_report(
+    def send_unified_report(
         self,
         sync_results: list[tuple[str, "SyncResult"]],
         scrub_results: list[tuple[str, "ScrubResult"]],
+        drive_health_results: list["DriveHealth"],
+        errors: list[str],
         duration_seconds: float,
     ) -> None:
-        """Send consolidated report for multi-drive operations.
+        """Send unified report for all program operations.
+
+        This is the ONLY report sent per program run, containing:
+        - Drive health stats (usage, temperature, SMART status)
+        - Bit rot detection (if any)
+        - Errors (if any)
+        - Sync results (across all drives)
+        - Scrub results (across all drives)
 
         Args:
             sync_results: List of (drive_name, SyncResult) tuples
             scrub_results: List of (drive_name, ScrubResult) tuples
+            drive_health_results: List of DriveHealth objects
+            errors: List of error messages
             duration_seconds: Total operation duration in seconds
         """
-        # Determine operation type
+        from .drive_monitor import format_drive_health
+
+        # Determine overall status
+        has_bit_rot = any(len(r.files_corrupted) > 0 for _, r in scrub_results)
+        has_errors = len(errors) > 0
         has_sync = len(sync_results) > 0
         has_scrub = len(scrub_results) > 0
 
+        if has_bit_rot:
+            status = "CRITICAL"
+        elif has_errors:
+            status = "WARNING"
+        else:
+            status = "SUCCESS"
+
+        # Determine operation type
         if has_sync and has_scrub:
             operation_type = "SYNC + SCRUB"
         elif has_sync:
             operation_type = "SYNC"
-        else:
+        elif has_scrub:
             operation_type = "SCRUB"
+        else:
+            operation_type = "UNKNOWN"
 
-        # Build email body using builder functions
+        # Build email body
         lines = []
-        lines.extend(self._build_header("CONSOLIDATED REPORT"))
+        lines.extend(self._build_header("PROGRAM REPORT"))
+        lines.append(f"Status:    {status}")
         lines.append(f"Operation: {operation_type}")
-        lines.append(f"Drives Processed: {max(len(sync_results), len(scrub_results))}")
-        lines.append(f"Duration: {self._format_duration(duration_seconds)}")
+        lines.append(f"Duration:  {self._format_duration(duration_seconds)}")
+        lines.append(f"Drives:    {len(drive_health_results)}")
         lines.append("")
 
-        # Use builder functions for sections
-        lines.extend(self._build_sync_section(sync_results, include_drive_header=True))
-        lines.extend(
-            self._build_scrub_section(scrub_results, include_drive_header=True)
-        )
+        # Drive health section
+        if drive_health_results:
+            lines.extend(self._build_header("DRIVES"))
+            for health in drive_health_results:
+                lines.append(format_drive_health(health))
+            lines.append("")
 
-        lines.append(Mailer._build_separator())
-
-        body = "\n".join(lines)
-
-        # Determine subject
-        num_drives = max(len(sync_results), len(scrub_results))
-        if num_drives > 1:
-            subject = f"Bit Rot Detector - {num_drives} Drives Processed Successfully"
-        else:
-            if has_sync and has_scrub:
-                subject = "Bit Rot Detector - Sync + Scrub Completed"
-            elif has_sync:
-                total_files = sync_results[0][1].files_scanned if sync_results else 0
-                subject = f"Bit Rot Detector - {total_files:,} Files Synced"
-            else:
-                total_files = (
-                    scrub_results[0][1].files_validated if scrub_results else 0
-                )
-                subject = f"Bit Rot Detector - {total_files:,} Files Validated"
-
-        # Always send consolidated reports
-        self.send_notification(subject, body)
-
-    @staticmethod
-    def format_summary_report(
-        sync_stats: Optional[dict] = None,
-        scrub_stats: Optional[dict] = None,
-    ) -> str:
-        """Format summary statistics report.
-
-        Args:
-            sync_stats: Sync operation statistics
-            scrub_stats: Scrub operation statistics
-
-        Returns:
-            Formatted summary report string
-        """
-        lines = [
-            "\n" + Mailer._build_separator(),
-            "SUMMARY STATISTICS",
-            Mailer._build_separator(),
-        ]
-
-        if sync_stats:
-            lines.extend(
-                [
-                    "\nSync Operation:",
-                    f"  Total Scanned:  {sync_stats.get('scanned', 0):,}",
-                    f"  Added:          {sync_stats.get('added', 0):,}",
-                    f"  Modified:       {sync_stats.get('modified', 0):,}",
-                    f"  Moved:          {sync_stats.get('moved', 0):,}",
-                    f"  Removed:        {sync_stats.get('removed', 0):,}",
-                    f"  Errors:         {sync_stats.get('errors', 0):,}",
-                ]
-            )
-
-        if scrub_stats:
-            lines.extend(
-                [
-                    "\nScrub Operation:",
-                    f"  Validated:      {scrub_stats.get('validated', 0):,}",
-                    f"  Corrupted:      {scrub_stats.get('corrupted', 0):,}",
-                    f"  Errors:         {scrub_stats.get('errors', 0):,}",
-                ]
-            )
-
-        lines.append(Mailer._build_separator())
-        return "\n".join(lines)
-
-    def send_sync_notification(
-        self,
-        files_added: int,
-        files_modified: int,
-        files_moved: int,
-        files_removed: int,
-        files_scanned: int,
-        errors: list[str],
-    ) -> None:
-        """Send notification for sync operation.
-
-        Args:
-            files_added: Number of files added
-            files_modified: Number of files modified
-            files_moved: Number of files moved
-            files_removed: Number of files removed
-            files_scanned: Total files scanned
-            errors: List of error messages
-        """
-        from .scanner import SyncResult
-
-        # Send if sync success notifications enabled and files were scanned
-        if files_scanned > 0 and self.config.notify_sync_success:
-            subject = f"Bit Rot Detector - {files_scanned:,} Files Synced"
-
-            # Create a SyncResult for the builder function
-            sync_result = SyncResult(
-                files_scanned=files_scanned,
-                files_added=files_added,
-                files_modified=files_modified,
-                files_moved=files_moved,
-                files_removed=files_removed,
-                errors=errors,
-            )
-
-            # Build body using existing section builder
-            lines = []
-            lines.extend(self._build_header("BIT ROT - SYNC"))
-            # Use existing builder function
-            lines.extend(
-                self._build_sync_section(
-                    [("Drive", sync_result)], include_drive_header=False
-                )
-            )
-
-            # Add error details if present
-            if errors:
-                lines.extend(Mailer._build_header("ERROR DETAILS"))
-                for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
-                    lines.append(f"{i}. {error}")
-                lines.append("")
-
-            lines.append(Mailer._build_separator())
-            body = "\n".join(lines)
-
-            self.send_notification(subject, body)
-
-    def send_scrub_notification(
-        self,
-        files_validated: int,
-        files_corrupted: list[str],
-        errors: list[str],
-    ) -> None:
-        """Send notification for scrub operation.
-
-        Args:
-            files_validated: Number of files validated
-            files_corrupted: List of corrupted file paths
-            errors: List of error messages
-        """
-        from .scanner import ScrubResult
-
-        # Send if corrupted files found (critical) or if scrub success notifications enabled
-        if files_corrupted:
-            # CRITICAL: Bit rot detected
-            subject = f"BIT ROT DETECTED - {len(files_corrupted)} Corrupted Files!"
-
-            lines = []
+        # Critical alert section (bit rot)
+        if has_bit_rot:
             lines.extend(self._build_header("CRITICAL ALERT"))
             lines.append("BIT ROT DETECTED!")
             lines.append("")
-            lines.append(
-                f"IMMEDIATE ACTION REQUIRED: {len(files_corrupted)} file(s) corrupted!"
-            )
-            lines.append("")
-            lines.extend(Mailer._build_header("CORRUPTED FILES (Full Paths)"))
 
-            # List all corrupted files with full paths
-            for i, filepath in enumerate(files_corrupted, 1):
-                lines.append(f"{i:4d}. {filepath}")
+            # Collect all corrupted files across all drives
+            for drive_name, scrub_result in scrub_results:
+                if scrub_result.files_corrupted:
+                    lines.append(f"Drive: {drive_name}")
+                    for i, filepath in enumerate(scrub_result.files_corrupted, 1):
+                        lines.append(f"  {i:4d}. {filepath}")
+                    lines.append("")
 
-            lines.append("")
-            lines.append(Mailer._build_separator())
-            lines.append("SUMMARY")
-            lines.append(Mailer._build_separator())
-            lines.append("")
-            lines.append(f"  Total Corrupted: {len(files_corrupted):,}")
-            lines.append(f"  Files Validated: {files_validated:,}")
-
-            # Add error details if present
-            if errors:
-                lines.append("")
-                lines.append(f"  Additional Errors: {len(errors):,}")
-                lines.append("")
-                lines.append(Mailer._build_separator())
-                lines.append("ERROR DETAILS")
-                lines.append(Mailer._build_separator())
-                lines.append("")
-                for i, error in enumerate(errors[:5], 1):  # Show first 5 errors
-                    lines.append(f"{i}. {error}")
-
-            lines.append("")
-            lines.append(Mailer._build_separator())
+            lines.append(self._build_separator())
             lines.append("RECOMMENDED ACTIONS")
-            lines.append(Mailer._build_separator())
+            lines.append(self._build_separator())
             lines.append("")
             lines.append("1. Restore corrupted files from your most recent backup")
             lines.append("2. Verify the integrity of your storage hardware")
             lines.append("3. Check system logs for hardware errors")
             lines.append("4. Consider running a full disk check (e.g., fsck, chkdsk)")
             lines.append("")
-            lines.append(Mailer._build_separator())
 
-            body = "\n".join(lines)
-            self.send_notification(subject, body)
+        # Errors section
+        if has_errors:
+            lines.extend(self._build_header("ERRORS"))
+            for i, error in enumerate(errors, 1):
+                lines.append(f"{i}. {error}")
+            lines.append("")
 
-        elif self.config.notify_scrub_success and files_validated > 0:
-            # Success notification
-            subject = f"Bit Rot Detector - {files_validated:,} Files Validated"
-
-            # Create a ScrubResult for the builder function
-            scrub_result = ScrubResult(
-                files_validated=files_validated,
-                files_corrupted=[],  # Empty for success case
-                errors=errors,
-            )
-
-            # Build body using existing section builder
-            lines = []
-            lines.extend(self._build_header("BIT ROT - SCRUB"))
-            # Use existing builder function
+        # Sync results section
+        if has_sync:
             lines.extend(
-                self._build_scrub_section(
-                    [("Drive", scrub_result)], include_drive_header=False
-                )
+                self._build_sync_section(sync_results, include_drive_header=True)
             )
 
-            # Add error details if present
-            if errors:
-                lines.extend(Mailer._build_header("ERROR DETAILS"))
-                for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
-                    lines.append(f"{i}. {error}")
-                lines.append("")
+        # Scrub results section
+        if has_scrub:
+            lines.extend(
+                self._build_scrub_section(scrub_results, include_drive_header=True)
+            )
 
-            lines.append(Mailer._build_separator())
-            body = "\n".join(lines)
+        lines.append(self._build_separator())
 
-            self.send_notification(subject, body)
+        body = "\n".join(lines)
 
-    def send_error_notification(self, error_message: str) -> None:
-        """Send critical error notification.
+        # Determine subject based on priority
+        if has_bit_rot:
+            total_corrupted = sum(len(r.files_corrupted) for _, r in scrub_results)
+            subject = f"BIT ROT DETECTED - {total_corrupted} Corrupted Files!"
+        elif has_errors:
+            subject = f"Bit Rot Detector - FAILED with {len(errors)} Error(s)"
+        else:
+            num_drives = len(drive_health_results)
+            if num_drives > 1:
+                subject = (
+                    f"Bit Rot Detector - {num_drives} Drives Processed Successfully"
+                )
+            else:
+                if has_sync and has_scrub:
+                    subject = "Bit Rot Detector - Sync + Scrub Completed"
+                elif has_sync:
+                    total_files = (
+                        sync_results[0][1].files_scanned if sync_results else 0
+                    )
+                    subject = f"Bit Rot Detector - {total_files:,} Files Synced"
+                else:
+                    total_files = (
+                        scrub_results[0][1].files_validated if scrub_results else 0
+                    )
+                    subject = f"Bit Rot Detector - {total_files:,} Files Validated"
 
-        Args:
-            error_message: Error message to send
-        """
-        if self.config.notify_critical_failures:
-            subject = "Bit Rot Detector - Critical Failure"
-
-            lines = []
-            lines.extend(self._build_header("CRITICAL FAILURE"))
-            lines.append("A critical error occurred during execution:")
-            lines.append("")
-            lines.append(error_message)
-            lines.append("")
-            lines.append(self._build_separator())
-            lines.append("")
-            lines.append("Please check the logs for more details.")
-
-            body = "\n".join(lines)
-            self.send_notification(subject, body)
+        # Always send unified report
+        self.send_notification(subject, body)
