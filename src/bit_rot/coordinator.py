@@ -178,6 +178,10 @@ def process_drives_concurrently(
         logger.warning("Interrupted! Stopping all workers...")
         if stop_event:
             stop_event.set()
+
+        # Cancel any pending futures that haven't started yet
+        for future in futures:
+            future.cancel()
         raise
 
     duration = time.time() - start_time

@@ -323,6 +323,9 @@ class Scanner:
             Path of the matching file in DB, or None if not found
         """
         for db_path, record in db_files.items():
+            if self.stop_event and self.stop_event.is_set():
+                break
+
             if db_path in seen_paths:
                 continue
 
