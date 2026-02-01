@@ -33,12 +33,8 @@ def load_config() -> Config:
     if not target_dirs_str:
         raise ValueError("TARGET_DIRECTORY not set in environment")
 
-    # Parse colon-separated or comma-separated paths
-    # Try colon first (Unix PATH convention), fall back to comma
-    if ":" in target_dirs_str:
-        target_dirs = [d.strip() for d in target_dirs_str.split(":") if d.strip()]
-    else:
-        target_dirs = [d.strip() for d in target_dirs_str.split(",") if d.strip()]
+    # Parse comma-separated paths
+    target_dirs = [d.strip() for d in target_dirs_str.split(",") if d.strip()]
 
     if not target_dirs:
         raise ValueError("TARGET_DIRECTORY is empty")
