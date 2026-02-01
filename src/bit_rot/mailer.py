@@ -232,9 +232,9 @@ Configuration:
             lines.append(f"  Total Validated: {total_validated:,}")
             lines.append(f"  Total Corrupted: {total_corrupted:,}")
             if total_corrupted == 0:
-                lines.append(f"  Status:          ✓ ALL FILES VERIFIED SUCCESSFULLY")
+                lines.append(f"  Status:          [OK] ALL FILES VERIFIED SUCCESSFULLY")
             else:
-                lines.append(f"  Status:          ⚠ CORRUPTION DETECTED")
+                lines.append(f"  Status:          [!] CORRUPTION DETECTED")
             lines.append("")
         
         return lines
@@ -388,7 +388,7 @@ Configuration:
             # Build body using existing section builder
             lines = []
             lines.append("╔" + "═" * 62 + "╗")
-            lines.append("║" + " " * 18 + "BIT ROT DETECTOR - SYNC REPORT" + " " * 13 + "║")
+            lines.append("║" + " " * 16 + "BIT ROT DETECTOR - SYNC REPORT" + " " * 16 + "║")
             lines.append("╚" + "═" * 62 + "╝")
             lines.append("")
             
@@ -495,7 +495,7 @@ Configuration:
             # Build body using existing section builder
             lines = []
             lines.append("╔" + "═" * 62 + "╗")
-            lines.append("║" + " " * 17 + "BIT ROT DETECTOR - SCRUB REPORT" + " " * 12 + "║")
+            lines.append("║" + " " * 15 + "BIT ROT DETECTOR - SCRUB REPORT" + " " * 16 + "║")
             lines.append("╚" + "═" * 62 + "╝")
             lines.append("")
             

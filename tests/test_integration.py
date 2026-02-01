@@ -53,10 +53,10 @@ def scenario_1_test_email():
     
     test_dir = setup_test_directory()
     
-    print("\n📧 Sending test email...")
+    print("\nSending test email...")
     run_bitrot("--test-email", test_dir)
     
-    print("\n✅ Check your email for: 'Bit Rot Detector - Test Email'")
+    print("\nCheck your email for: 'Bit Rot Detector - Test Email'")
     input("\nPress Enter to continue to next scenario...")
 
 
@@ -69,14 +69,14 @@ def scenario_2_new_files():
     test_dir = setup_test_directory()
     
     # Create some files
-    print("\n📁 Creating 10 new files...")
+    print("\nCreating 10 new files...")
     for i in range(10):
         (test_dir / f"file_{i:03d}.txt").write_text(f"Content of file {i}\n" * 100)
     
-    print("🔍 Running sync operation...")
+    print("Running sync operation...")
     run_bitrot("--sync", test_dir)
     
-    print("\n✅ Check your email for: 'Bit Rot Detector - 10 New Files Detected'")
+    print("\nCheck your email for: 'Bit Rot Detector - 10 New Files Detected'")
     input("\nPress Enter to continue to next scenario...")
 
 
@@ -89,25 +89,25 @@ def scenario_3_modifications():
     test_dir = setup_test_directory()
     
     # Create initial files
-    print("\n📁 Creating initial files...")
+    print("\nCreating initial files...")
     for i in range(5):
         (test_dir / f"file_{i}.txt").write_text(f"Original content {i}\n" * 50)
     
-    print("🔍 Running initial sync...")
+    print("Running initial sync...")
     run_bitrot("--sync", test_dir)
     
     # Wait a bit to ensure mtime changes
     time.sleep(2)
     
     # Modify some files
-    print("\n✏️  Modifying 3 files...")
+    print("\nModifying 3 files...")
     for i in range(3):
         (test_dir / f"file_{i}.txt").write_text(f"MODIFIED content {i}\n" * 75)
     
-    print("🔍 Running sync to detect modifications...")
+    print("Running sync to detect modifications...")
     run_bitrot("--sync", test_dir)
     
-    print("\n✅ Check your email for: 'Bit Rot Detector - 0 New Files Detected'")
+    print("\nCheck your email for: 'Bit Rot Detector - 0 New Files Detected'")
     print("   (Should show 3 files modified)")
     input("\nPress Enter to continue to next scenario...")
 
@@ -121,25 +121,25 @@ def scenario_3b_file_moves():
     test_dir = setup_test_directory()
     
     # Create initial files
-    print("\n📁 Creating initial files...")
+    print("\nCreating initial files...")
     for i in range(5):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
     
-    print("🔍 Running initial sync to add files to database...")
+    print("Running initial sync to add files to database...")
     run_bitrot("--sync", test_dir)
     
     # Create subdirectory and move files
-    print("\n📦 Moving 3 files to subdirectory...")
+    print("\nMoving 3 files to subdirectory...")
     subdir = test_dir / "moved_files"
     subdir.mkdir()
     
     for i in range(3):
         (test_dir / f"file_{i}.txt").rename(subdir / f"file_{i}.txt")
     
-    print("🔍 Running sync to detect moves...")
+    print("Running sync to detect moves...")
     run_bitrot("--sync", test_dir)
     
-    print("\n✅ Check your email - should show 3 files moved")
+    print("\nCheck your email - should show 3 files moved")
     input("\nPress Enter to continue to next scenario...")
 
 
@@ -152,22 +152,22 @@ def scenario_3c_file_removals():
     test_dir = setup_test_directory()
     
     # Create initial files
-    print("\n📁 Creating initial files...")
+    print("\nCreating initial files...")
     for i in range(8):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
     
-    print("🔍 Running initial sync...")
+    print("Running initial sync...")
     run_bitrot("--sync", test_dir)
     
     # Remove some files
-    print("\n🗑️  Removing 4 files...")
+    print("\nRemoving 4 files...")
     for i in range(4):
         (test_dir / f"file_{i}.txt").unlink()
     
-    print("🔍 Running sync to detect removals...")
+    print("Running sync to detect removals...")
     run_bitrot("--sync", test_dir)
     
-    print("\n✅ Check your email - should show 4 files removed")
+    print("\nCheck your email - should show 4 files removed")
     input("\nPress Enter to continue to next scenario...")
 
 
@@ -180,17 +180,17 @@ def scenario_4_scrub_success():
     test_dir = setup_test_directory()
     
     # Create files
-    print("\n📁 Creating files...")
+    print("\nCreating files...")
     for i in range(8):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 100)
     
-    print("🔍 Running initial sync...")
+    print("Running initial sync...")
     run_bitrot("--sync", test_dir)
     
-    print("🔍 Running scrub operation...")
+    print("Running scrub operation...")
     run_bitrot("--scrub", test_dir)
     
-    print("\n✅ Check your email for: 'Bit Rot Detector - 8 Files Validated'")
+    print("\nCheck your email for: 'Bit Rot Detector - 8 Files Validated'")
     print("   (Should show 0 corrupted files)")
     input("\nPress Enter to continue to next scenario...")
 
@@ -204,15 +204,15 @@ def scenario_5_bit_rot():
     test_dir = setup_test_directory()
     
     # Create files
-    print("\n📁 Creating files...")
+    print("\nCreating files...")
     for i in range(5):
         (test_dir / f"file_{i}.txt").write_text(f"Original content {i}\n" * 100)
     
-    print("🔍 Running initial sync to hash files...")
+    print("Running initial sync to hash files...")
     run_bitrot("--sync", test_dir)
     
     # Corrupt files by modifying WITHOUT updating mtime
-    print("\n💥 Simulating bit rot (corrupting files without changing mtime)...")
+    print("\nSimulating bit rot (corrupting files without changing mtime)...")
     import sqlite3
     
     # Get the database
@@ -229,10 +229,10 @@ def scenario_5_bit_rot():
         # Restore original mtime to simulate bit rot
         os.utime(file_path, (original_stat.st_atime, original_stat.st_mtime))
     
-    print("🔍 Running scrub to detect corruption...")
+    print("Running scrub to detect corruption...")
     run_bitrot("--scrub", test_dir)
     
-    print("\n✅ Check your email for: '⚠️ BIT ROT DETECTED - 2 Corrupted Files!'")
+    print("\nCheck your email for: 'BIT ROT DETECTED - 2 Corrupted Files!'")
     print("   (Should list the 2 corrupted files with full paths)")
     input("\nPress Enter to continue to next scenario...")
 
@@ -246,21 +246,21 @@ def scenario_6_canary_failure():
     test_dir = setup_test_directory()
     
     # Create files
-    print("\n📁 Creating files...")
+    print("\nCreating files...")
     for i in range(3):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
     
-    print("🔍 Running initial sync...")
+    print("Running initial sync...")
     run_bitrot("--sync", test_dir)
     
     # Remove canary
-    print("\n💥 Removing canary file to simulate unmounted drive...")
+    print("\nRemoving canary file to simulate unmounted drive...")
     (test_dir / ".bitrot-canary").unlink()
     
-    print("🔍 Running sync (should fail canary check)...")
+    print("Running sync (should fail canary check)...")
     run_bitrot("--sync", test_dir)
     
-    print("\n✅ Check your email for: '⚠️ Bit Rot Detector - Critical Error'")
+    print("\nCheck your email for: 'Bit Rot Detector - Critical Error'")
     print("   (Should mention canary check failed)")
     input("\nPress Enter to finish...")
 
@@ -277,7 +277,7 @@ def main():
     
     # Check if .env exists
     if not Path(".env").exists():
-        print("\n❌ ERROR: .env file not found!")
+        print("\nERROR: .env file not found!")
         print("Please create .env with your SMTP credentials first.")
         return
     
@@ -297,19 +297,19 @@ def main():
         scenario_6_canary_failure()
         
         print("\n" + "=" * 80)
-        print("✅ All test scenarios completed!")
+        print("All test scenarios completed!")
         print("=" * 80)
         print("\nCheck your email inbox for all 8 notification types.")
         
         # Cleanup
-        print("\n🧹 Cleaning up test directory...")
+        print("\nCleaning up test directory...")
         shutil.rmtree("test_email_scenarios", ignore_errors=True)
         
     except KeyboardInterrupt:
-        print("\n\n⚠️  Test interrupted by user.")
+        print("\n\n Test interrupted by user.")
         shutil.rmtree("test_email_scenarios", ignore_errors=True)
     except Exception as e:
-        print(f"\n\n❌ Error during testing: {e}")
+        print(f"\n\nError during testing: {e}")
         import traceback
         traceback.print_exc()
 
