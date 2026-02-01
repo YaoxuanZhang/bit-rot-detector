@@ -16,7 +16,7 @@ class TestConfig:
         # Create test directory
         test_target = temp_dir / "test_drive"
         test_target.mkdir()
-        
+
         # Set environment variables
         monkeypatch.setenv("TARGET_DIRECTORY", str(test_target))
         monkeypatch.setenv("SMTP_HOST", "mail.smtp2go.com")
@@ -32,10 +32,10 @@ class TestConfig:
         monkeypatch.setenv("SCRUB_FREQUENCY", "weekly")
         monkeypatch.setenv("LOG_RETENTION_DAYS", "14")
         monkeypatch.setenv("MAX_WORKERS", "8")
-        
+
         # Load config
         config = load_config()
-        
+
         # Assertions
         assert len(config.target_paths) == 1
         assert config.target_paths[0] == test_target
@@ -51,14 +51,14 @@ class TestConfig:
     def test_load_config_missing_target_directory(self, monkeypatch):
         """Test that missing TARGET_DIRECTORY raises ValueError."""
         monkeypatch.delenv("TARGET_DIRECTORY", raising=False)
-        
+
         with pytest.raises(ValueError, match="TARGET_DIRECTORY not set"):
             load_config()
 
     def test_load_config_invalid_target_directory(self, monkeypatch):
         """Test that non-existent target directory raises ValueError."""
         monkeypatch.setenv("TARGET_DIRECTORY", "/nonexistent/path")
-        
+
         with pytest.raises(ValueError, match="does not exist"):
             load_config()
 
@@ -66,10 +66,10 @@ class TestConfig:
         """Test that invalid scrub percentage raises ValueError."""
         test_target = temp_dir / "test_drive"
         test_target.mkdir()
-        
+
         monkeypatch.setenv("TARGET_DIRECTORY", str(test_target))
         monkeypatch.setenv("SCRUB_PERCENTAGE", "150.0")  # Invalid: > 100
-        
+
         with pytest.raises(ValueError, match="SCRUB_PERCENTAGE must be between"):
             load_config()
 
@@ -77,10 +77,10 @@ class TestConfig:
         """Test that invalid scrub frequency raises ValueError."""
         test_target = temp_dir / "test_drive"
         test_target.mkdir()
-        
+
         monkeypatch.setenv("TARGET_DIRECTORY", str(test_target))
         monkeypatch.setenv("SCRUB_FREQUENCY", "hourly")  # Invalid
-        
+
         with pytest.raises(ValueError, match="SCRUB_FREQUENCY must be"):
             load_config()
 
@@ -88,10 +88,10 @@ class TestConfig:
         """Test that invalid max workers raises ValueError."""
         test_target = temp_dir / "test_drive"
         test_target.mkdir()
-        
+
         monkeypatch.setenv("TARGET_DIRECTORY", str(test_target))
         monkeypatch.setenv("MAX_WORKERS", "0")  # Invalid: < 1
-        
+
         with pytest.raises(ValueError, match="MAX_WORKERS must be at least 1"):
             load_config()
 
@@ -102,11 +102,11 @@ class TestConfig:
         target2 = temp_dir / "drive2"
         target1.mkdir()
         target2.mkdir()
-        
+
         monkeypatch.setenv("TARGET_DIRECTORY", f"{target1},{target2}")
-        
+
         config = load_config()
-        
+
         assert len(config.target_paths) == 2
         assert target1 in config.target_paths
         assert target2 in config.target_paths
@@ -115,12 +115,12 @@ class TestConfig:
         """Test that duplicate paths are removed."""
         target = temp_dir / "drive"
         target.mkdir()
-        
+
         # Specify same path twice
         monkeypatch.setenv("TARGET_DIRECTORY", f"{target},{target}")
-        
+
         config = load_config()
-        
+
         # Should only have one path after deduplication
         assert len(config.target_paths) == 1
         assert config.target_paths[0] == target
@@ -129,20 +129,30 @@ class TestConfig:
         """Test that default values are used when env vars not set."""
         test_target = temp_dir / "test_drive"
         test_target.mkdir()
-        
+
         # Set only required env vars
         monkeypatch.setenv("TARGET_DIRECTORY", str(test_target))
-        
+
         # Clear optional env vars
-        for key in ["SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
-                    "SMTP_SENDER", "SMTP_RECIPIENT", "NOTIFY_SYNC_SUCCESS",
-                    "NOTIFY_SCRUB_SUCCESS", "NOTIFY_CRITICAL_FAILURES",
-                    "SCRUB_PERCENTAGE", "SCRUB_FREQUENCY", "LOG_RETENTION_DAYS",
-                    "MAX_WORKERS"]:
+        for key in [
+            "SMTP_HOST",
+            "SMTP_PORT",
+            "SMTP_USERNAME",
+            "SMTP_PASSWORD",
+            "SMTP_SENDER",
+            "SMTP_RECIPIENT",
+            "NOTIFY_SYNC_SUCCESS",
+            "NOTIFY_SCRUB_SUCCESS",
+            "NOTIFY_CRITICAL_FAILURES",
+            "SCRUB_PERCENTAGE",
+            "SCRUB_FREQUENCY",
+            "LOG_RETENTION_DAYS",
+            "MAX_WORKERS",
+        ]:
             monkeypatch.delenv(key, raising=False)
-        
+
         config = load_config()
-        
+
         # Check defaults
         assert config.email_config.smtp_host == "mail.smtp2go.com"
         assert config.email_config.smtp_port == 587

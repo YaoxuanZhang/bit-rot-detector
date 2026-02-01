@@ -33,8 +33,13 @@ def load_config() -> Config:
     if not target_dirs_str:
         raise ValueError("TARGET_DIRECTORY not set in environment")
 
-    # Parse comma-separated paths
-    target_dirs = [d.strip() for d in target_dirs_str.split(",") if d.strip()]
+    # Parse colon-separated or comma-separated paths
+    # Try colon first (Unix PATH convention), fall back to comma
+    if ":" in target_dirs_str:
+        target_dirs = [d.strip() for d in target_dirs_str.split(":") if d.strip()]
+    else:
+        target_dirs = [d.strip() for d in target_dirs_str.split(",") if d.strip()]
+
     if not target_dirs:
         raise ValueError("TARGET_DIRECTORY is empty")
 
@@ -65,18 +70,24 @@ def load_config() -> Config:
         sender=os.getenv("SMTP_SENDER", ""),
         recipient=os.getenv("SMTP_RECIPIENT", ""),
         notify_sync_success=os.getenv("NOTIFY_SYNC_SUCCESS", "false").lower() == "true",
-        notify_scrub_success=os.getenv("NOTIFY_SCRUB_SUCCESS", "false").lower() == "true",
-        notify_critical_failures=os.getenv("NOTIFY_CRITICAL_FAILURES", "true").lower() == "true",
+        notify_scrub_success=os.getenv("NOTIFY_SCRUB_SUCCESS", "false").lower()
+        == "true",
+        notify_critical_failures=os.getenv("NOTIFY_CRITICAL_FAILURES", "true").lower()
+        == "true",
     )
 
     # Scrub configuration
     scrub_percentage = float(os.getenv("SCRUB_PERCENTAGE", "1.0"))
     if not 0.1 <= scrub_percentage <= 100.0:
-        raise ValueError(f"SCRUB_PERCENTAGE must be between 0.1 and 100.0, got {scrub_percentage}")
+        raise ValueError(
+            f"SCRUB_PERCENTAGE must be between 0.1 and 100.0, got {scrub_percentage}"
+        )
 
     scrub_frequency = os.getenv("SCRUB_FREQUENCY", "daily").lower()
     if scrub_frequency not in ["daily", "weekly", "monthly"]:
-        raise ValueError(f"SCRUB_FREQUENCY must be daily/weekly/monthly, got {scrub_frequency}")
+        raise ValueError(
+            f"SCRUB_FREQUENCY must be daily/weekly/monthly, got {scrub_frequency}"
+        )
 
     # Log retention configuration
     log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "7"))

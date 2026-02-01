@@ -18,8 +18,6 @@ from .scanner import Scanner
 load_dotenv()
 
 
-
-
 def main() -> int:
     """Main entry point for CLI.
 
@@ -48,23 +46,27 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    # Setup logging first so logger is available for exception handlers
+    # Use default retention if config loading fails
+    setup_logging()
+    logger = logging.getLogger(__name__)
+
     try:
         # Load configuration
         config = load_config()
 
-        # Setup logging with rotation
-        setup_logging(config.log_retention_days)
-        logger = logging.getLogger(__name__)
-
         logger.info("Loading configuration from environment")
-        logger.info(f"Target directories: {', '.join(str(p) for p in config.target_paths)}")
-        logger.info(f"Scrub settings: {config.scrub_percentage}%, {config.scrub_frequency}")
+        logger.info(
+            f"Target directories: {', '.join(str(p) for p in config.target_paths)}"
+        )
+        logger.info(
+            f"Scrub settings: {config.scrub_percentage}%, {config.scrub_frequency}"
+        )
         logger.info(f"Log retention: {config.log_retention_days} days")
         logger.info(f"Max workers: {config.max_workers}")
 
         # Initialize components
         mailer = Mailer(config.email_config)
-
 
         # Test email mode
         if args.test_email:
@@ -85,17 +87,18 @@ def main() -> int:
         run_scrub_op = args.scrub or not args.sync
 
         # Process drives concurrently
-        all_sync_results, all_scrub_results, errors, duration = process_drives_concurrently(
-            target_paths=config.target_paths,
-            scanner=scanner,
-            mailer=mailer,
-            run_sync_op=run_sync_op,
-            run_scrub_op=run_scrub_op,
-            scrub_percentage=config.scrub_percentage,
-            scrub_frequency=config.scrub_frequency,
-            max_workers=config.max_workers,
+        all_sync_results, all_scrub_results, errors, duration = (
+            process_drives_concurrently(
+                target_paths=config.target_paths,
+                scanner=scanner,
+                mailer=mailer,
+                run_sync_op=run_sync_op,
+                run_scrub_op=run_scrub_op,
+                scrub_percentage=config.scrub_percentage,
+                scrub_frequency=config.scrub_frequency,
+                max_workers=config.max_workers,
+            )
         )
-
 
         # Send consolidated email if no errors and no bit rot
         has_bit_rot = any(len(r.files_corrupted) > 0 for _, r in all_scrub_results)
@@ -105,7 +108,9 @@ def main() -> int:
             if run_sync_op and run_scrub_op and all_sync_results and all_scrub_results:
                 # Both operations ran - send consolidated report
                 logger.info("Sending consolidated report")
-                mailer.send_consolidated_report(all_sync_results, all_scrub_results, duration)
+                mailer.send_consolidated_report(
+                    all_sync_results, all_scrub_results, duration
+                )
             else:
                 # Only one operation ran - send individual notifications
                 for drive_name, sync_result in all_sync_results:
@@ -118,7 +123,9 @@ def main() -> int:
                         errors=sync_result.errors,
                     )
                 for drive_name, scrub_result in all_scrub_results:
-                    if not scrub_result.files_corrupted:  # Only send if not already sent as critical
+                    if (
+                        not scrub_result.files_corrupted
+                    ):  # Only send if not already sent as critical
                         mailer.send_scrub_notification(
                             files_validated=scrub_result.files_validated,
                             files_corrupted=scrub_result.files_corrupted,
@@ -126,7 +133,9 @@ def main() -> int:
                         )
 
         if errors:
-            logger.warning(f"========== OPERATIONS COMPLETED WITH {len(errors)} ERROR(S) ==========")
+            logger.warning(
+                f"========== OPERATIONS COMPLETED WITH {len(errors)} ERROR(S) =========="
+            )
             return 1
         elif has_bit_rot:
             logger.critical("========== BIT ROT DETECTED ==========")

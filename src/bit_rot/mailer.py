@@ -101,17 +101,17 @@ Configuration:
     @staticmethod
     def _format_duration(duration_seconds: float) -> str:
         """Format duration in seconds to human-readable string.
-        
+
         Args:
             duration_seconds: Duration in seconds
-            
+
         Returns:
             Formatted duration string
         """
         hours = int(duration_seconds // 3600)
         minutes = int((duration_seconds % 3600) // 60)
         seconds = int(duration_seconds % 60)
-        
+
         if hours > 0:
             return f"{hours} hours {minutes} minutes {seconds} seconds"
         elif minutes > 0:
@@ -122,10 +122,10 @@ Configuration:
     @staticmethod
     def _build_header(title: str) -> list[str]:
         """Build a header section for emails (24 chars for mobile).
-        
+
         Args:
             title: Header title text
-            
+
         Returns:
             List of header lines
         """
@@ -135,11 +135,11 @@ Configuration:
             "=" * 24,
             "",
         ]
-    
+
     @staticmethod
     def _build_separator() -> str:
         """Build a separator line for emails (24 chars for mobile).
-        
+
         Returns:
             Separator string
         """
@@ -147,35 +147,36 @@ Configuration:
 
     @staticmethod
     def _build_sync_section(
-        sync_results: list[tuple[str, "SyncResult"]],
-        include_drive_header: bool = True
+        sync_results: list[tuple[str, "SyncResult"]], include_drive_header: bool = True
     ) -> list[str]:
         """Build sync results section.
-        
+
         Args:
             sync_results: List of (drive_name, SyncResult) tuples
             include_drive_header: Whether to include drive names in output
-            
+
         Returns:
             List of formatted lines
         """
         from .scanner import SyncResult
-        
+
         lines = []
         if not sync_results:
             return lines
-            
+
         # Build header
-        header_title = "SYNC RESULTS" + (" BY DRIVE" if include_drive_header and len(sync_results) > 1 else "")
+        header_title = "SYNC RESULTS" + (
+            " BY DRIVE" if include_drive_header and len(sync_results) > 1 else ""
+        )
         lines.extend(Mailer._build_header(header_title))
-        
+
         total_scanned = 0
         total_added = 0
         total_modified = 0
         total_moved = 0
         total_removed = 0
         total_errors = 0
-        
+
         for drive_name, result in sync_results:
             if include_drive_header and len(sync_results) > 1:
                 lines.append(f"Drive: {drive_name}")
@@ -187,14 +188,14 @@ Configuration:
             if len(result.errors) > 0:
                 lines.append(f"  Errors:         {len(result.errors):,}")
             lines.append("")
-            
+
             total_scanned += result.files_scanned
             total_added += result.files_added
             total_modified += result.files_modified
             total_moved += result.files_moved
             total_removed += result.files_removed
             total_errors += len(result.errors)
-        
+
         # Only show totals when multiple drives
         if len(sync_results) > 1:
             lines.append("SYNC TOTALS:")
@@ -206,37 +207,39 @@ Configuration:
             if total_errors > 0:
                 lines.append(f"  Total Errors:   {total_errors:,}")
             lines.append("")
-        
+
         return lines
 
     @staticmethod
     def _build_scrub_section(
         scrub_results: list[tuple[str, "ScrubResult"]],
-        include_drive_header: bool = True
+        include_drive_header: bool = True,
     ) -> list[str]:
         """Build scrub results section.
-        
+
         Args:
             scrub_results: List of (drive_name, ScrubResult) tuples
             include_drive_header: Whether to include drive names in output
-            
+
         Returns:
             List of formatted lines
         """
         from .scanner import ScrubResult
-        
+
         lines = []
         if not scrub_results:
             return lines
-            
+
         # Build header
-        header_title = "SCRUB RESULTS" + (" BY DRIVE" if include_drive_header and len(scrub_results) > 1 else "")
+        header_title = "SCRUB RESULTS" + (
+            " BY DRIVE" if include_drive_header and len(scrub_results) > 1 else ""
+        )
         lines.extend(Mailer._build_header(header_title))
-        
+
         total_validated = 0
         total_corrupted = 0
         total_errors = 0
-        
+
         for drive_name, result in scrub_results:
             if include_drive_header and len(scrub_results) > 1:
                 lines.append(f"Drive: {drive_name}")
@@ -245,11 +248,11 @@ Configuration:
             if len(result.errors) > 0:
                 lines.append(f"  Errors:         {len(result.errors):,}")
             lines.append("")
-            
+
             total_validated += result.files_validated
             total_corrupted += len(result.files_corrupted)
             total_errors += len(result.errors)
-        
+
         # Only show totals when multiple drives
         if len(scrub_results) > 1:
             lines.append("SCRUB TOTALS:")
@@ -260,7 +263,7 @@ Configuration:
             else:
                 lines.append(f"  Status:          [!] CORRUPTION DETECTED")
             lines.append("")
-        
+
         return lines
 
     def send_consolidated_report(
@@ -279,33 +282,32 @@ Configuration:
         # Determine operation type
         has_sync = len(sync_results) > 0
         has_scrub = len(scrub_results) > 0
-        
+
         if has_sync and has_scrub:
             operation_type = "SYNC + SCRUB"
         elif has_sync:
             operation_type = "SYNC"
         else:
             operation_type = "SCRUB"
-        
+
         # Build email body using builder functions
         lines = []
-        lines.append("╔" + "═" * 62 + "╗")
-        lines.append("║" + " " * 10 + "BIT ROT DETECTOR - CONSOLIDATED REPORT" + " " * 13 + "║")
-        lines.append("╚" + "═" * 62 + "╝")
-        lines.append("")
+        lines.extend(self._build_header("CONSOLIDATED REPORT"))
         lines.append(f"Operation: {operation_type}")
         lines.append(f"Drives Processed: {max(len(sync_results), len(scrub_results))}")
         lines.append(f"Duration: {self._format_duration(duration_seconds)}")
         lines.append("")
-        
+
         # Use builder functions for sections
         lines.extend(self._build_sync_section(sync_results, include_drive_header=True))
-        lines.extend(self._build_scrub_section(scrub_results, include_drive_header=True))
-        
+        lines.extend(
+            self._build_scrub_section(scrub_results, include_drive_header=True)
+        )
+
         lines.append(Mailer._build_separator())
-        
+
         body = "\n".join(lines)
-        
+
         # Determine subject
         num_drives = max(len(sync_results), len(scrub_results))
         if num_drives > 1:
@@ -317,20 +319,13 @@ Configuration:
                 total_files = sync_results[0][1].files_scanned if sync_results else 0
                 subject = f"Bit Rot Detector - {total_files:,} Files Synced"
             else:
-                total_files = scrub_results[0][1].files_validated if scrub_results else 0
+                total_files = (
+                    scrub_results[0][1].files_validated if scrub_results else 0
+                )
                 subject = f"Bit Rot Detector - {total_files:,} Files Validated"
-        
-        # Send email if notifications are enabled
-        should_send = False
-        if has_sync and self.config.notify_sync_success:
-            should_send = True
-        if has_scrub and self.config.notify_scrub_success:
-            should_send = True
-        
-        if should_send:
-            self.send_notification(subject, body)
-        else:
-            logger.info("Consolidated report not sent (notifications disabled)")
+
+        # Always send consolidated reports
+        self.send_notification(subject, body)
 
     @staticmethod
     def format_summary_report(
@@ -346,7 +341,11 @@ Configuration:
         Returns:
             Formatted summary report string
         """
-        lines = ["\n" + Mailer._build_separator(), "SUMMARY STATISTICS", Mailer._build_separator()]
+        lines = [
+            "\n" + Mailer._build_separator(),
+            "SUMMARY STATISTICS",
+            Mailer._build_separator(),
+        ]
 
         if sync_stats:
             lines.extend(
@@ -398,7 +397,7 @@ Configuration:
         # Send if sync success notifications enabled and files were scanned
         if files_scanned > 0 and self.config.notify_sync_success:
             subject = f"Bit Rot Detector - {files_scanned:,} Files Synced"
-            
+
             # Create a SyncResult for the builder function
             sync_result = SyncResult(
                 files_scanned=files_scanned,
@@ -408,20 +407,24 @@ Configuration:
                 files_removed=files_removed,
                 errors=errors,
             )
-            
+
             # Build body using existing section builder
             lines = []
-            lines.extend(self._build_header("BIT ROT - SYNC"))            
+            lines.extend(self._build_header("BIT ROT - SYNC"))
             # Use existing builder function
-            lines.extend(self._build_sync_section([("Drive", sync_result)], include_drive_header=False))
-            
+            lines.extend(
+                self._build_sync_section(
+                    [("Drive", sync_result)], include_drive_header=False
+                )
+            )
+
             # Add error details if present
             if errors:
                 lines.extend(Mailer._build_header("ERROR DETAILS"))
                 for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
                     lines.append(f"{i}. {error}")
                 lines.append("")
-            
+
             lines.append(Mailer._build_separator())
             body = "\n".join(lines)
 
@@ -446,20 +449,21 @@ Configuration:
         if files_corrupted:
             # CRITICAL: Bit rot detected
             subject = f"BIT ROT DETECTED - {len(files_corrupted)} Corrupted Files!"
-            
+
             lines = []
-            lines.append("╔" + "═" * 62 + "╗")
-            lines.append("║" + " " * 10 + "CRITICAL ALERT - BIT ROT DETECTED" + " " * 18 + "║")
-            lines.append("╚" + "═" * 62 + "╝")
+            lines.extend(self._build_header("CRITICAL ALERT"))
+            lines.append("BIT ROT DETECTED!")
             lines.append("")
-            lines.append(f"IMMEDIATE ACTION REQUIRED: {len(files_corrupted)} file(s) corrupted!")
+            lines.append(
+                f"IMMEDIATE ACTION REQUIRED: {len(files_corrupted)} file(s) corrupted!"
+            )
             lines.append("")
             lines.extend(Mailer._build_header("CORRUPTED FILES (Full Paths)"))
-            
+
             # List all corrupted files with full paths
             for i, filepath in enumerate(files_corrupted, 1):
                 lines.append(f"{i:4d}. {filepath}")
-            
+
             lines.append("")
             lines.append(Mailer._build_separator())
             lines.append("SUMMARY")
@@ -467,7 +471,7 @@ Configuration:
             lines.append("")
             lines.append(f"  Total Corrupted: {len(files_corrupted):,}")
             lines.append(f"  Files Validated: {files_validated:,}")
-            
+
             # Add error details if present
             if errors:
                 lines.append("")
@@ -479,7 +483,7 @@ Configuration:
                 lines.append("")
                 for i, error in enumerate(errors[:5], 1):  # Show first 5 errors
                     lines.append(f"{i}. {error}")
-            
+
             lines.append("")
             lines.append(Mailer._build_separator())
             lines.append("RECOMMENDED ACTIONS")
@@ -491,34 +495,38 @@ Configuration:
             lines.append("4. Consider running a full disk check (e.g., fsck, chkdsk)")
             lines.append("")
             lines.append(Mailer._build_separator())
-            
+
             body = "\n".join(lines)
             self.send_notification(subject, body)
 
         elif self.config.notify_scrub_success and files_validated > 0:
             # Success notification
             subject = f"Bit Rot Detector - {files_validated:,} Files Validated"
-            
+
             # Create a ScrubResult for the builder function
             scrub_result = ScrubResult(
                 files_validated=files_validated,
                 files_corrupted=[],  # Empty for success case
                 errors=errors,
             )
-            
+
             # Build body using existing section builder
             lines = []
-            lines.extend(self._build_header("BIT ROT - SCRUB"))            
+            lines.extend(self._build_header("BIT ROT - SCRUB"))
             # Use existing builder function
-            lines.extend(self._build_scrub_section([("Drive", scrub_result)], include_drive_header=False))
-            
+            lines.extend(
+                self._build_scrub_section(
+                    [("Drive", scrub_result)], include_drive_header=False
+                )
+            )
+
             # Add error details if present
             if errors:
                 lines.extend(Mailer._build_header("ERROR DETAILS"))
                 for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
                     lines.append(f"{i}. {error}")
                 lines.append("")
-            
+
             lines.append(Mailer._build_separator())
             body = "\n".join(lines)
 
@@ -532,10 +540,16 @@ Configuration:
         """
         if self.config.notify_critical_failures:
             subject = "Bit Rot Detector - Critical Failure"
-            body = f"""A critical error occurred during execution:
 
-{error_message}
+            lines = []
+            lines.extend(self._build_header("CRITICAL FAILURE"))
+            lines.append("A critical error occurred during execution:")
+            lines.append("")
+            lines.append(error_message)
+            lines.append("")
+            lines.append(self._build_separator())
+            lines.append("")
+            lines.append("Please check the logs for more details.")
 
-Please check the logs for more details.
-"""
+            body = "\n".join(lines)
             self.send_notification(subject, body)

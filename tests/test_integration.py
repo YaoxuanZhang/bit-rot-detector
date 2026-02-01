@@ -11,37 +11,41 @@ from pathlib import Path
 def setup_test_directory():
     """Create a fresh test directory."""
     test_dir = Path("test_email_scenarios")
-    
+
     # Clean up if exists
     if test_dir.exists():
         shutil.rmtree(test_dir)
-    
+
     test_dir.mkdir()
-    
+
     # Create canary
     (test_dir / ".bitrot-canary").touch()
-    
+
     return test_dir
 
 
-def run_bitrot(args: str, test_dir: Path):
+def run_bitrot(args: str, test_dir: Path, extra_env: dict = None):
     """Run bit-rot-detector with given args."""
     env = os.environ.copy()
     env["TARGET_DIRECTORY"] = str(test_dir.absolute())
-    
+    env["SCRUB_PERCENTAGE"] = "100"
+
+    if extra_env:
+        env.update(extra_env)
+
     result = subprocess.run(
         f"uv run bit-rot-detector {args}",
         shell=True,
         cwd=Path.cwd(),
         env=env,
         capture_output=True,
-        text=True
+        text=True,
     )
-    
+
     print(result.stdout)
     if result.stderr:
         print("STDERR:", result.stderr)
-    
+
     return result.returncode
 
 
@@ -50,12 +54,12 @@ def scenario_1_test_email():
     print("\n" + "=" * 80)
     print("SCENARIO 1: Test Email")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     print("\nSending test email...")
     run_bitrot("--test-email", test_dir)
-    
+
     print("\nCheck your email for: 'Bit Rot Detector - Test Email'")
     input("\nPress Enter to continue to next scenario...")
 
@@ -65,17 +69,17 @@ def scenario_2_new_files():
     print("\n" + "=" * 80)
     print("SCENARIO 2: New Files Detected")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     # Create some files
     print("\nCreating 10 new files...")
     for i in range(10):
         (test_dir / f"file_{i:03d}.txt").write_text(f"Content of file {i}\n" * 100)
-    
+
     print("Running sync operation...")
     run_bitrot("--sync", test_dir)
-    
+
     print("\nCheck your email for: 'Bit Rot Detector - 10 New Files Detected'")
     input("\nPress Enter to continue to next scenario...")
 
@@ -85,28 +89,28 @@ def scenario_3_modifications():
     print("\n" + "=" * 80)
     print("SCENARIO 3: File Modifications Detected")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     # Create initial files
     print("\nCreating initial files...")
     for i in range(5):
         (test_dir / f"file_{i}.txt").write_text(f"Original content {i}\n" * 50)
-    
+
     print("Running initial sync...")
     run_bitrot("--sync", test_dir)
-    
+
     # Wait a bit to ensure mtime changes
     time.sleep(2)
-    
+
     # Modify some files
     print("\nModifying 3 files...")
     for i in range(3):
         (test_dir / f"file_{i}.txt").write_text(f"MODIFIED content {i}\n" * 75)
-    
+
     print("Running sync to detect modifications...")
     run_bitrot("--sync", test_dir)
-    
+
     print("\nCheck your email for: 'Bit Rot Detector - 0 New Files Detected'")
     print("   (Should show 3 files modified)")
     input("\nPress Enter to continue to next scenario...")
@@ -117,28 +121,28 @@ def scenario_4_file_moves():
     print("\n" + "=" * 80)
     print("SCENARIO 4: File Moves Detected")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     # Create initial files
     print("\nCreating initial files...")
     for i in range(5):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
-    
+
     print("Running initial sync to add files to database...")
     run_bitrot("--sync", test_dir)
-    
+
     # Create subdirectory and move files
     print("\nMoving 3 files to subdirectory...")
     subdir = test_dir / "moved_files"
     subdir.mkdir()
-    
+
     for i in range(3):
         (test_dir / f"file_{i}.txt").rename(subdir / f"file_{i}.txt")
-    
+
     print("Running sync to detect moves...")
     run_bitrot("--sync", test_dir)
-    
+
     print("\nCheck your email - should show 3 files moved")
     input("\nPress Enter to continue to next scenario...")
 
@@ -148,25 +152,25 @@ def scenario_5_file_removals():
     print("\n" + "=" * 80)
     print("SCENARIO 5: File Removals Detected")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     # Create initial files
     print("\nCreating initial files...")
     for i in range(8):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
-    
+
     print("Running initial sync...")
     run_bitrot("--sync", test_dir)
-    
+
     # Remove some files
     print("\nRemoving 4 files...")
     for i in range(4):
         (test_dir / f"file_{i}.txt").unlink()
-    
+
     print("Running sync to detect removals...")
     run_bitrot("--sync", test_dir)
-    
+
     print("\nCheck your email - should show 4 files removed")
     input("\nPress Enter to continue to next scenario...")
 
@@ -176,20 +180,20 @@ def scenario_6_scrub_success():
     print("\n" + "=" * 80)
     print("SCENARIO 6: Successful Scrub Operation")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     # Create files
     print("\nCreating files...")
     for i in range(8):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 100)
-    
+
     print("Running initial sync...")
     run_bitrot("--sync", test_dir)
-    
+
     print("Running scrub operation...")
     run_bitrot("--scrub", test_dir)
-    
+
     print("\nCheck your email for: 'Bit Rot Detector - 8 Files Validated'")
     print("   (Should show 0 corrupted files)")
     input("\nPress Enter to continue to next scenario...")
@@ -200,38 +204,38 @@ def scenario_7_bit_rot():
     print("\n" + "=" * 80)
     print("SCENARIO 7: BIT ROT DETECTION (Simulated)")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     # Create files
     print("\nCreating files...")
     for i in range(5):
         (test_dir / f"file_{i}.txt").write_text(f"Original content {i}\n" * 100)
-    
+
     print("Running initial sync to hash files...")
     run_bitrot("--sync", test_dir)
-    
+
     # Corrupt files by modifying WITHOUT updating mtime
     print("\nSimulating bit rot (corrupting files without changing mtime)...")
     import sqlite3
-    
+
     # Get the database
     db_path = test_dir / "bitrot.db"
-    
+
     # Corrupt 2 files by changing content but keeping same size
     for i in range(2):
         file_path = test_dir / f"file_{i}.txt"
         original_stat = file_path.stat()
-        
+
         # Change content but keep same size
         file_path.write_text(f"CORRUPTED!!! {i}\n" * 100)
-        
+
         # Restore original mtime to simulate bit rot
         os.utime(file_path, (original_stat.st_atime, original_stat.st_mtime))
-    
+
     print("Running scrub to detect corruption...")
     run_bitrot("--scrub", test_dir)
-    
+
     print("\nCheck your email for: 'BIT ROT DETECTED - 2 Corrupted Files!'")
     print("   (Should list the 2 corrupted files with full paths)")
     input("\nPress Enter to continue to next scenario...")
@@ -242,24 +246,24 @@ def scenario_8_canary_failure():
     print("\n" + "=" * 80)
     print("SCENARIO 8: Canary Check Failure")
     print("=" * 80)
-    
+
     test_dir = setup_test_directory()
-    
+
     # Create files
     print("\nCreating files...")
     for i in range(3):
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
-    
+
     print("Running initial sync...")
     run_bitrot("--sync", test_dir)
-    
+
     # Remove canary
     print("\nRemoving canary file to simulate unmounted drive...")
     (test_dir / ".bitrot-canary").unlink()
-    
+
     print("Running sync (should fail canary check)...")
     run_bitrot("--sync", test_dir)
-    
+
     print("\nCheck your email for: 'Bit Rot Detector - Critical Error'")
     print("   (Should mention canary check failed)")
     input("\nPress Enter to finish...")
@@ -270,58 +274,60 @@ def scenario_9_multi_drive():
     print("\n" + "=" * 80)
     print("SCENARIO 9: Multiple Drives (Sync + Scrub)")
     print("=" * 80)
-    
+
     # Create two test directories
     test_dir1 = Path("test_email_scenarios/drive1")
     test_dir2 = Path("test_email_scenarios/drive2")
-    
+
     # Clean up if exists
     if Path("test_email_scenarios").exists():
         shutil.rmtree("test_email_scenarios")
-    
+
     test_dir1.mkdir(parents=True)
     test_dir2.mkdir(parents=True)
-    
+
     # Create canaries
     (test_dir1 / ".bitrot-canary").touch()
     (test_dir2 / ".bitrot-canary").touch()
-    
+
     # Create files on drive 1
     print("\nCreating files on Drive 1 (WD_Elements)...")
     for i in range(8):
         (test_dir1 / f"doc_{i}.txt").write_text(f"Drive 1 content {i}\n" * 100)
-    
+
     # Create files on drive 2
     print("Creating files on Drive 2 (Seagate_Backup)...")
     for i in range(5):
         (test_dir2 / f"backup_{i}.txt").write_text(f"Drive 2 content {i}\n" * 100)
-    
+
     print("Running initial sync on both drives...")
     env = os.environ.copy()
     env["TARGET_DIRECTORY"] = f"{test_dir1.absolute()}:{test_dir2.absolute()}"
-    
+    env["SCRUB_PERCENTAGE"] = "100"
+
     result = subprocess.run(
         "uv run bit-rot-detector --sync",
         shell=True,
         cwd=Path.cwd(),
         env=env,
         capture_output=True,
-        text=True
+        text=True,
     )
     print(result.stdout)
     if result.stderr:
         print("STDERR:", result.stderr)
-    
+
     # Modify some files on drive 1
     print("\nModifying 3 files on Drive 1...")
+    time.sleep(2)
     for i in range(3):
         (test_dir1 / f"doc_{i}.txt").write_text(f"MODIFIED Drive 1 content {i}\n" * 120)
-    
+
     # Remove some files from drive 2
     print("Removing 2 files from Drive 2...")
     for i in range(2):
         (test_dir2 / f"backup_{i}.txt").unlink()
-    
+
     print("Running sync + scrub on both drives...")
     result = subprocess.run(
         "uv run bit-rot-detector --sync --scrub",
@@ -329,12 +335,12 @@ def scenario_9_multi_drive():
         cwd=Path.cwd(),
         env=env,
         capture_output=True,
-        text=True
+        text=True,
     )
     print(result.stdout)
     if result.stderr:
         print("STDERR:", result.stderr)
-    
+
     print("\nCheck your email:")
     print("  - Subject should show combined totals from both drives")
     print("  - Body should show separate sections for each drive")
@@ -349,16 +355,18 @@ def main():
     print("=" * 80)
     print("         BIT ROT DETECTOR - END-TO-END EMAIL TESTS")
     print("=" * 80)
-    
-    print("\nThis will create test data and send REAL emails to your configured address.")
+
+    print(
+        "\nThis will create test data and send REAL emails to your configured address."
+    )
     print("Make sure your .env file has valid SMTP credentials!")
-    
+
     # Check if .env exists
     if not Path(".env").exists():
         print("\nERROR: .env file not found!")
         print("Please create .env with your SMTP credentials first.")
         return
-    
+
     # Scenario menu
     scenarios = {
         "1": ("Test Email", scenario_1_test_email),
@@ -371,7 +379,7 @@ def main():
         "8": ("Canary Failure", scenario_8_canary_failure),
         "9": ("Multi-Drive Sync+Scrub", scenario_9_multi_drive),
     }
-    
+
     print("\nAvailable test scenarios:")
     print("-" * 80)
     for key, (name, _) in scenarios.items():
@@ -379,13 +387,15 @@ def main():
     print("  A. Run ALL scenarios")
     print("  Q. Quit")
     print("-" * 80)
-    
-    selection = input("\nSelect scenarios to run (comma-separated, e.g., 1,2,7 or A for all): ").strip()
-    
+
+    selection = input(
+        "\nSelect scenarios to run (comma-separated, e.g., 1,2,7 or A for all): "
+    ).strip()
+
     if selection.upper() == "Q":
         print("Cancelled.")
         return
-    
+
     # Determine which scenarios to run
     to_run = []
     if selection.upper() == "A":
@@ -397,36 +407,37 @@ def main():
                 to_run.append(scenarios[s])
             else:
                 print(f"Warning: Invalid selection '{s}' ignored")
-    
+
     if not to_run:
         print("No valid scenarios selected.")
         return
-    
+
     print(f"\nReady to run {len(to_run)} scenario(s)?")
     response = input("Continue? (yes/no): ")
     if response.lower() != "yes":
         print("Cancelled.")
         return
-    
+
     try:
         for name, scenario_func in to_run:
             scenario_func()
-        
+
         print("\n" + "=" * 80)
         print(f"{len(to_run)} test scenario(s) completed!")
         print("=" * 80)
         print("\nCheck your email inbox for notifications.")
-        
+
         # Cleanup
         print("\nCleaning up test directory...")
         shutil.rmtree("test_email_scenarios", ignore_errors=True)
-        
+
     except KeyboardInterrupt:
         print("\n\nTest interrupted by user.")
         shutil.rmtree("test_email_scenarios", ignore_errors=True)
     except Exception as e:
         print(f"\n\nError during testing: {e}")
         import traceback
+
         traceback.print_exc()
 
 

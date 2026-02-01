@@ -30,11 +30,11 @@ class Hasher:
         """
         try:
             hasher = blake3.blake3()
-            
+
             with open(filepath, "rb") as f:
                 while chunk := f.read(CHUNK_SIZE):
                     hasher.update(chunk)
-            
+
             hash_value = hasher.hexdigest()
             logger.debug(f"Computed hash for {filepath}: {hash_value[:16]}...")
             return hash_value

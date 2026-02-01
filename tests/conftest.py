@@ -13,7 +13,7 @@ from bit_rot.mailer import EmailConfig
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Provide a temporary directory for testing.
-    
+
     Yields:
         Path to temporary directory (automatically cleaned up)
     """
@@ -24,7 +24,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def mock_email_config() -> EmailConfig:
     """Provide a mock email configuration for testing.
-    
+
     Returns:
         EmailConfig with test settings
     """
@@ -44,18 +44,18 @@ def mock_email_config() -> EmailConfig:
 @pytest.fixture
 def mock_config(temp_dir: Path, mock_email_config: EmailConfig) -> Config:
     """Provide a mock application configuration for testing.
-    
+
     Args:
         temp_dir: Temporary directory fixture
         mock_email_config: Mock email configuration fixture
-    
+
     Returns:
         Config with test settings
     """
     # Create test directory
     test_target = temp_dir / "test_target"
     test_target.mkdir()
-    
+
     return Config(
         target_paths=[test_target],
         email_config=mock_email_config,

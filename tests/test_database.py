@@ -21,7 +21,7 @@ class TestDatabase:
         """Test database file is created."""
         db_path = temp_dir / "test.db"
         db = Database(db_path)
-        
+
         assert db_path.exists()
         db.close()
 
@@ -34,7 +34,7 @@ class TestDatabase:
                 file_size=1024,
                 mtime=123456.0,
             )
-        
+
         # Verify file was added
         files = db.get_all_files()
         assert "/test/file.txt" in files
@@ -55,7 +55,7 @@ class TestDatabase:
                 raise Exception("Test error")
         except Exception:
             pass
-        
+
         # Verify file was not added (rolled back)
         files = db.get_all_files()
         assert "/test/file.txt" not in files
@@ -70,7 +70,7 @@ class TestDatabase:
                 file_size=1024,
                 mtime=123456.0,
             )
-        
+
         # Update the file
         with db.transaction():
             db.stage_file_update(
@@ -79,7 +79,7 @@ class TestDatabase:
                 file_size=2048,  # New size
                 mtime=123457.0,
             )
-        
+
         # Verify file was updated
         files = db.get_all_files()
         assert files["/test/file.txt"].hash == "def456"
@@ -95,11 +95,11 @@ class TestDatabase:
                 file_size=1024,
                 mtime=123456.0,
             )
-        
+
         # Remove file
         with db.transaction():
             db.stage_file_removal("/test/file.txt")
-        
+
         # Verify file was removed
         files = db.get_all_files()
         assert "/test/file.txt" not in files
@@ -115,10 +115,10 @@ class TestDatabase:
                     file_size=1024,
                     mtime=123456.0,
                 )
-        
+
         # Get 50% of files for scrubbing
         scrub_files = db.get_files_for_scrub(percentage=50.0)
-        
+
         # Should return approximately 5 files
         assert 4 <= len(scrub_files) <= 6
 
@@ -132,10 +132,10 @@ class TestDatabase:
                 file_size=1024,
                 mtime=123456.0,
             )
-        
+
         # Update scrub status
         db.update_scrub_status("/test/file.txt")
-        
+
         # Verify scrub count increased
         files = db.get_all_files()
         assert files["/test/file.txt"].scrub_count == 1
@@ -157,9 +157,9 @@ class TestDatabase:
                 file_size=1024,
                 mtime=123456.0,
             )
-        
+
         db.update_scrub_status("/test/file.txt")
-        
+
         # Update file (e.g., moved)
         with db.transaction():
             db.stage_file_update(
@@ -169,7 +169,7 @@ class TestDatabase:
                 mtime=123456.0,
                 scrub_count=1,  # Preserve scrub count
             )
-        
+
         # Verify scrub history preserved
         files = db.get_all_files()
         assert files["/test/file.txt"].scrub_count == 1

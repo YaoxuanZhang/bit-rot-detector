@@ -33,36 +33,35 @@ class Database:
 
         Args:
             db_path: Path to SQLite database file
-            
+
         Raises:
             sqlite3.DatabaseError: If database file is corrupted
         """
         self.db_path = db_path
         logger.info(f"Initializing database at {self.db_path}")
-        
+
         try:
             self.conn = sqlite3.connect(str(db_path))
             self.conn.row_factory = sqlite3.Row
-            
+
             # Test database integrity
             self.conn.execute("PRAGMA integrity_check").fetchone()
-            
+
         except sqlite3.DatabaseError as e:
             logger.critical(f"Database corruption detected: {e}")
             logger.critical(f"Database file: {db_path}")
             logger.critical("Recommendation: Delete corrupted database and re-scan")
             raise
-        
+
         self._staged_updates: list[tuple] = []
         self._staged_removals: list[str] = []
-        
+
         self._create_schema()
         logger.info("Database schema initialized successfully")
 
     def _create_schema(self) -> None:
         """Create database schema if it doesn't exist."""
-        self.conn.execute(
-            """
+        self.conn.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 abs_path TEXT PRIMARY KEY,
                 hash TEXT NOT NULL,
@@ -73,8 +72,7 @@ class Database:
                 file_size INTEGER NOT NULL,
                 mtime REAL NOT NULL
             )
-            """
-        )
+            """)
         self.conn.commit()
         logger.info("Database schema initialized successfully")
 
@@ -129,7 +127,16 @@ class Database:
         now = datetime.now().isoformat()
 
         self._staged_updates.append(
-            (abs_path, hash, added_at or now, now, last_scrubbed, scrub_count or 0, file_size, mtime)
+            (
+                abs_path,
+                hash,
+                added_at or now,
+                now,
+                last_scrubbed,
+                scrub_count or 0,
+                file_size,
+                mtime,
+            )
         )
         logger.debug(f"Staged update for: {abs_path}")
 
@@ -173,7 +180,9 @@ class Database:
         self._staged_updates = []
         self._staged_removals = []
 
-    def get_files_for_scrub(self, percentage: float, min_age_days: Optional[int] = None) -> list[FileRecord]:
+    def get_files_for_scrub(
+        self, percentage: float, min_age_days: Optional[int] = None
+    ) -> list[FileRecord]:
         """Get files for scrubbing based on percentage and age.
 
         Args:

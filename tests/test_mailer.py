@@ -22,9 +22,9 @@ class TestMailer:
         # Mock SMTP connection
         mock_server = Mock()
         mock_smtp.return_value.__enter__.return_value = mock_server
-        
+
         result = mailer.send_notification("Test Subject", "Test Body")
-        
+
         assert result is True
         mock_server.starttls.assert_called_once()
         mock_server.login.assert_called_once()
@@ -35,9 +35,9 @@ class TestMailer:
         """Test email sending failure."""
         # Mock SMTP failure
         mock_smtp.side_effect = Exception("SMTP Error")
-        
+
         result = mailer.send_notification("Test Subject", "Test Body")
-        
+
         assert result is False
 
     def test_format_duration(self):
@@ -56,9 +56,11 @@ class TestMailer:
             files_removed=1,
             errors=[],
         )
-        
-        lines = Mailer._build_sync_section([("TestDrive", sync_result)], include_drive_header=True)
-        
+
+        lines = Mailer._build_sync_section(
+            [("TestDrive", sync_result)], include_drive_header=True
+        )
+
         # Should contain the results
         assert any("100" in line for line in lines)
         assert any("10" in line for line in lines)
@@ -83,12 +85,12 @@ class TestMailer:
             files_removed=2,
             errors=[],
         )
-        
+
         lines = Mailer._build_sync_section(
             [("WD_Elements", sync_result1), ("Seagate_Backup", sync_result2)],
-            include_drive_header=True
+            include_drive_header=True,
         )
-        
+
         # Should show drive headers
         assert any("WD_Elements" in line for line in lines)
         assert any("Seagate_Backup" in line for line in lines)
@@ -103,9 +105,11 @@ class TestMailer:
             files_corrupted=[],
             errors=[],
         )
-        
-        lines = Mailer._build_scrub_section([("TestDrive", scrub_result)], include_drive_header=True)
-        
+
+        lines = Mailer._build_scrub_section(
+            [("TestDrive", scrub_result)], include_drive_header=True
+        )
+
         assert any("500" in line for line in lines)
         assert any("SCRUB RESULTS" in line for line in lines)
 
@@ -114,7 +118,7 @@ class TestMailer:
         """Test sync notification when enabled."""
         mock_server = Mock()
         mock_smtp.return_value.__enter__.return_value = mock_server
-        
+
         mailer.send_sync_notification(
             files_added=10,
             files_modified=5,
@@ -123,12 +127,14 @@ class TestMailer:
             files_scanned=100,
             errors=[],
         )
-        
+
         # Should send email
         mock_server.send_message.assert_called_once()
 
     @patch("bit_rot.mailer.smtplib.SMTP")
-    def test_send_sync_notification_disabled(self, mock_smtp, mock_email_config: EmailConfig):
+    def test_send_sync_notification_disabled(
+        self, mock_smtp, mock_email_config: EmailConfig
+    ):
         """Test sync notification when disabled."""
         # Disable sync notifications
         config = EmailConfig(
@@ -143,7 +149,7 @@ class TestMailer:
             notify_critical_failures=mock_email_config.notify_critical_failures,
         )
         mailer = Mailer(config)
-        
+
         mailer.send_sync_notification(
             files_added=10,
             files_modified=5,
@@ -152,7 +158,7 @@ class TestMailer:
             files_scanned=100,
             errors=[],
         )
-        
+
         # Should not send email
         mock_smtp.assert_not_called()
 
@@ -161,13 +167,13 @@ class TestMailer:
         """Test scrub notification when bit rot detected (always sends)."""
         mock_server = Mock()
         mock_smtp.return_value.__enter__.return_value = mock_server
-        
+
         mailer.send_scrub_notification(
             files_validated=100,
             files_corrupted=["/path/to/corrupted1.txt", "/path/to/corrupted2.txt"],
             errors=[],
         )
-        
+
         # Should always send when bit rot detected
         mock_server.send_message.assert_called_once()
         # Subject should indicate bit rot
@@ -180,18 +186,20 @@ class TestMailer:
         """Test scrub success notification when enabled."""
         mock_server = Mock()
         mock_smtp.return_value.__enter__.return_value = mock_server
-        
+
         mailer.send_scrub_notification(
             files_validated=100,
             files_corrupted=[],
             errors=[],
         )
-        
+
         # Should send email
         mock_server.send_message.assert_called_once()
 
     @patch("bit_rot.mailer.smtplib.SMTP")
-    def test_send_scrub_notification_success_disabled(self, mock_smtp, mock_email_config: EmailConfig):
+    def test_send_scrub_notification_success_disabled(
+        self, mock_smtp, mock_email_config: EmailConfig
+    ):
         """Test scrub success notification when disabled."""
         # Disable scrub success notifications
         config = EmailConfig(
@@ -206,12 +214,12 @@ class TestMailer:
             notify_critical_failures=mock_email_config.notify_critical_failures,
         )
         mailer = Mailer(config)
-        
+
         mailer.send_scrub_notification(
             files_validated=100,
             files_corrupted=[],
             errors=[],
         )
-        
+
         # Should not send email
         mock_smtp.assert_not_called()

@@ -66,7 +66,9 @@ def process_drive(
         # Scrub operation
         if run_scrub_op:
             logger.info(f"[{drive_name}] Starting scrub operation")
-            scrub_result = scanner.scrub_files(db, scrub_percentage, scrub_frequency, drive_name)
+            scrub_result = scanner.scrub_files(
+                db, scrub_percentage, scrub_frequency, drive_name
+            )
             logger.info(
                 f"[{drive_name}] Scrub completed - Validated: {scrub_result.files_validated}, "
                 f"Corrupted: {len(scrub_result.files_corrupted)}"
@@ -93,7 +95,9 @@ def process_drives_concurrently(
     scrub_percentage: float,
     scrub_frequency: str,
     max_workers: int,
-) -> tuple[list[tuple[str, SyncResult]], list[tuple[str, ScrubResult]], list[str], float]:
+) -> tuple[
+    list[tuple[str, SyncResult]], list[tuple[str, ScrubResult]], list[str], float
+]:
     """Process multiple drives concurrently.
 
     Args:

@@ -65,7 +65,9 @@ class Scanner:
 
         return exists
 
-    def sync_directory(self, root_path: Path, db: Database, drive_name: str = "") -> SyncResult:
+    def sync_directory(
+        self, root_path: Path, db: Database, drive_name: str = ""
+    ) -> SyncResult:
         """Sync directory with database (Phases 1-3).
 
         Phase 1: Walk directory and record file metadata
@@ -123,7 +125,10 @@ class Scanner:
                 filepath = Path(root) / filename
                 try:
                     stat = filepath.stat()
-                    current_files[str(filepath.absolute())] = (stat.st_size, stat.st_mtime)
+                    current_files[str(filepath.absolute())] = (
+                        stat.st_size,
+                        stat.st_mtime,
+                    )
                     files_scanned += 1
 
                     if files_scanned % 1000 == 0:
@@ -146,11 +151,11 @@ class Scanner:
             if current_path in db_files:
                 # File exists in same location - check if modified
                 record = db_files[current_path]
-                
+
                 # Compare size and mtime to detect modifications
                 size_changed = size != record.file_size
                 mtime_changed = abs(mtime - record.mtime) > 0.001  # 1ms tolerance
-                
+
                 if size_changed or mtime_changed:
                     # File was modified - re-compute hash
                     try:
@@ -185,7 +190,7 @@ class Scanner:
                         last_scrubbed=record.last_scrubbed,
                         scrub_count=record.scrub_count,
                     )
-                
+
                 seen_db_paths.add(current_path)
             else:
                 # New file or potentially moved file
@@ -198,7 +203,9 @@ class Scanner:
                     # Size and mtime already matched in _find_moved_file
                     # No need to rehash - the file is uniquely identified
                     old_record = db_files[moved_from]
-                    logger.info(f"{log_prefix}Detected move: {moved_from} -> {current_path}")
+                    logger.info(
+                        f"{log_prefix}Detected move: {moved_from} -> {current_path}"
+                    )
                     db.stage_file_update(
                         abs_path=current_path,
                         hash=old_record.hash,  # Reuse existing hash
@@ -270,7 +277,7 @@ class Scanner:
         current_files: dict[str, tuple[int, float]],
     ) -> Optional[str]:
         """Find a file in the database with matching size and mtime.
-        
+
         IMPORTANT: Only returns a match if the old location no longer exists
         in the current scan. This prevents false move detection when duplicate
         files exist (e.g., two identical files, moving one shouldn't be detected
@@ -290,7 +297,7 @@ class Scanner:
         for db_path, record in db_files.items():
             if db_path in seen_paths:
                 continue
-            
+
             # CRITICAL: Only consider it a move if old location no longer exists
             if db_path in current_files:
                 # Old location still exists - this is a duplicate, not a move
@@ -308,7 +315,9 @@ class Scanner:
 
         return None
 
-    def _add_new_file(self, path: str, file_hash: str, size: int, mtime: float, db: Database) -> None:
+    def _add_new_file(
+        self, path: str, file_hash: str, size: int, mtime: float, db: Database
+    ) -> None:
         """Add a new file to the database.
 
         Args:
@@ -336,7 +345,9 @@ class Scanner:
             ScrubResult with validation statistics
         """
         log_prefix = f"[{drive_name}] " if drive_name else ""
-        logger.info(f"{log_prefix}Starting scrub operation ({percentage}%, {frequency} frequency)")
+        logger.info(
+            f"{log_prefix}Starting scrub operation ({percentage}%, {frequency} frequency)"
+        )
 
         # Determine minimum age based on frequency
         min_age_days = None
@@ -373,7 +384,9 @@ class Scanner:
                     files_validated += 1
 
                     if files_validated % 100 == 0:
-                        logger.info(f"{log_prefix}Validated {files_validated}/{len(files_to_scrub)} files...")
+                        logger.info(
+                            f"{log_prefix}Validated {files_validated}/{len(files_to_scrub)} files..."
+                        )
                 else:
                     # Hash mismatch - BIT ROT DETECTED!
                     error_msg = (
