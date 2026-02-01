@@ -1,6 +1,7 @@
 """Drive processing coordination for multi-drive operations."""
 
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -100,6 +101,7 @@ def process_drives_concurrently(
     scrub_percentage: float,
     scrub_frequency: str,
     max_workers: int,
+    stop_event: Optional[threading.Event] = None,
 ) -> tuple[
     list[tuple[str, SyncResult]],
     list[tuple[str, ScrubResult]],
@@ -117,6 +119,7 @@ def process_drives_concurrently(
         scrub_percentage: Percentage of files to scrub
         scrub_frequency: Scrub frequency setting
         max_workers: Maximum number of concurrent workers
+        stop_event: Event to signal cancellation
 
     Returns:
         Tuple of (sync_results, scrub_results, drive_health_results, errors, duration_seconds)
@@ -132,40 +135,49 @@ def process_drives_concurrently(
     logger.info(f"Processing {len(target_paths)} drive(s) with {num_workers} worker(s)")
 
     # Process drives concurrently
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        # Submit all drive processing tasks
-        futures = {
-            executor.submit(
-                process_drive,
-                path,
-                scanner,
-                run_sync_op,
-                run_scrub_op,
-                scrub_percentage,
-                scrub_frequency,
-            ): path
-            for path in target_paths
-        }
+    try:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all drive processing tasks
+            futures = {
+                executor.submit(
+                    process_drive,
+                    path,
+                    scanner,
+                    run_sync_op,
+                    run_scrub_op,
+                    scrub_percentage,
+                    scrub_frequency,
+                ): path
+                for path in target_paths
+            }
 
-        # Collect results as they complete
-        for future in as_completed(futures):
-            drive_name, drive_health, sync_result, scrub_result, error = future.result()
+            # Collect results as they complete
+            for future in as_completed(futures):
+                drive_name, drive_health, sync_result, scrub_result, error = (
+                    future.result()
+                )
 
-            # Always collect drive health
-            all_drive_health.append(drive_health)
+                # Always collect drive health
+                all_drive_health.append(drive_health)
 
-            if error:
-                errors.append(error)
-            else:
-                if sync_result:
-                    all_sync_results.append((drive_name, sync_result))
-                if scrub_result:
-                    all_scrub_results.append((drive_name, scrub_result))
-                    # Log bit rot detection
-                    if scrub_result.files_corrupted:
-                        logger.critical(
-                            f"BIT ROT DETECTED on {drive_name}: {len(scrub_result.files_corrupted)} corrupted files"
-                        )
+                if error:
+                    errors.append(error)
+                else:
+                    if sync_result:
+                        all_sync_results.append((drive_name, sync_result))
+                    if scrub_result:
+                        all_scrub_results.append((drive_name, scrub_result))
+                        # Log bit rot detection
+                        if scrub_result.files_corrupted:
+                            logger.critical(
+                                f"BIT ROT DETECTED on {drive_name}: {len(scrub_result.files_corrupted)} corrupted files"
+                            )
+
+    except KeyboardInterrupt:
+        logger.warning("Interrupted! Stopping all workers...")
+        if stop_event:
+            stop_event.set()
+        raise
 
     duration = time.time() - start_time
     return all_sync_results, all_scrub_results, all_drive_health, errors, duration

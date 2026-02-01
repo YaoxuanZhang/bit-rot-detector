@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -37,13 +38,15 @@ class ScrubResult:
 class Scanner:
     """Directory scanner with move detection and scrubbing capabilities."""
 
-    def __init__(self, hasher: Hasher):
+    def __init__(self, hasher: Hasher, stop_event: Optional[threading.Event] = None):
         """Initialize scanner.
 
         Args:
             hasher: Hasher instance for computing file hashes
+            stop_event: Event to signal cancellation
         """
         self.hasher = hasher
+        self.stop_event = stop_event
 
     @staticmethod
     def check_canary(root_path: Path) -> bool:
@@ -110,6 +113,10 @@ class Scanner:
         }
 
         for root, dirs, files in os.walk(root_path, followlinks=False):
+            if self.stop_event and self.stop_event.is_set():
+                logger.info("Scanning interrupted")
+                break
+
             # Skip system folders (modify dirs in-place to prevent descending)
             dirs[:] = [d for d in dirs if d not in system_folders]
 
@@ -355,6 +362,10 @@ class Scanner:
         errors = []
 
         for i, record in enumerate(files_to_scrub, 1):
+            if self.stop_event and self.stop_event.is_set():
+                logger.info("Scrubbing interrupted")
+                break
+
             try:
                 filepath = Path(record.abs_path)
 

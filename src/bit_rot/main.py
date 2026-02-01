@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 
 from bit_rot.logging_config import setup_logging
 
+import threading
+
 from .config import load_config
 from .coordinator import process_drives_concurrently
 from .hasher import Hasher
@@ -24,6 +26,9 @@ def main() -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    # Create valid stop event for graceful shutdown
+    stop_event = threading.Event()
+
     # Parse arguments first (before logging setup)
     parser = argparse.ArgumentParser(
         description="Bit Rot Detector - Production-grade file corruption detection"
@@ -80,7 +85,7 @@ def main() -> int:
 
         # Initialize scanner
         hasher = Hasher()
-        scanner = Scanner(hasher)
+        scanner = Scanner(hasher, stop_event=stop_event)
 
         # Determine what to run
         run_sync_op = args.sync or not args.scrub
@@ -96,6 +101,7 @@ def main() -> int:
                 scrub_percentage=config.scrub_percentage,
                 scrub_frequency=config.scrub_frequency,
                 max_workers=config.max_workers,
+                stop_event=stop_event,
             )
         )
 
@@ -123,6 +129,10 @@ def main() -> int:
             logger.info("========== ALL OPERATIONS COMPLETED SUCCESSFULLY ==========")
             return 0
 
+    except KeyboardInterrupt:
+        logger.warning("\n========== PROCESS INTERRUPTED BY USER ==========")
+        stop_event.set()
+        return 130
     except ValueError as e:
         logger.critical(f"Configuration error: {e}")
         return 1
