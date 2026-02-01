@@ -91,3 +91,20 @@ class TestHasher:
 
         assert file_hash is not None
         assert len(file_hash) > 0
+
+    def test_hash_interruption(self, temp_dir: Path):
+        """Test that hashing can be interrupted."""
+        import threading
+
+        # Create a large file
+        large_file = temp_dir / "large_interrupt.bin"
+        # 1MB is enough to trigger multiple chunks if CHUNK_SIZE is 64KB
+        large_file.write_bytes(b"X" * (1024 * 1024))
+
+        stop_event = threading.Event()
+        stop_event.set()
+
+        hasher = Hasher(stop_event=stop_event)
+
+        with pytest.raises(KeyboardInterrupt):
+            hasher.compute_hash(large_file)

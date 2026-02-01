@@ -84,7 +84,7 @@ def main() -> int:
                 return 1
 
         # Initialize scanner
-        hasher = Hasher()
+        hasher = Hasher(stop_event=stop_event)
         scanner = Scanner(hasher, stop_event=stop_event)
 
         # Determine what to run
