@@ -98,6 +98,147 @@ Configuration:
         logger.info("Sending test email")
         return self.send_notification(subject, body)
 
+    @staticmethod
+    def _format_duration(duration_seconds: float) -> str:
+        """Format duration in seconds to human-readable string.
+        
+        Args:
+            duration_seconds: Duration in seconds
+            
+        Returns:
+            Formatted duration string
+        """
+        hours = int(duration_seconds // 3600)
+        minutes = int((duration_seconds % 3600) // 60)
+        seconds = int(duration_seconds % 60)
+        
+        if hours > 0:
+            return f"{hours} hours {minutes} minutes {seconds} seconds"
+        elif minutes > 0:
+            return f"{minutes} minutes {seconds} seconds"
+        else:
+            return f"{seconds} seconds"
+
+    @staticmethod
+    def _build_sync_section(
+        sync_results: list[tuple[str, "SyncResult"]],
+        include_drive_header: bool = True
+    ) -> list[str]:
+        """Build sync results section.
+        
+        Args:
+            sync_results: List of (drive_name, SyncResult) tuples
+            include_drive_header: Whether to include drive names in output
+            
+        Returns:
+            List of formatted lines
+        """
+        from .scanner import SyncResult
+        
+        lines = []
+        if not sync_results:
+            return lines
+            
+        lines.append("=" * 64)
+        lines.append("SYNC RESULTS" + (" BY DRIVE" if include_drive_header and len(sync_results) > 1 else ""))
+        lines.append("=" * 64)
+        lines.append("")
+        
+        total_scanned = 0
+        total_added = 0
+        total_modified = 0
+        total_moved = 0
+        total_removed = 0
+        total_errors = 0
+        
+        for drive_name, result in sync_results:
+            if include_drive_header and len(sync_results) > 1:
+                lines.append(f"Drive: {drive_name}")
+            lines.append(f"  Files Scanned:  {result.files_scanned:,}")
+            lines.append(f"  Added:          {result.files_added:,}")
+            lines.append(f"  Modified:       {result.files_modified:,}")
+            lines.append(f"  Moved:          {result.files_moved:,}")
+            lines.append(f"  Removed:        {result.files_removed:,}")
+            if len(result.errors) > 0:
+                lines.append(f"  Errors:         {len(result.errors):,}")
+            lines.append("")
+            
+            total_scanned += result.files_scanned
+            total_added += result.files_added
+            total_modified += result.files_modified
+            total_moved += result.files_moved
+            total_removed += result.files_removed
+            total_errors += len(result.errors)
+        
+        # Only show totals when multiple drives
+        if len(sync_results) > 1:
+            lines.append("SYNC TOTALS:")
+            lines.append(f"  Total Files:    {total_scanned:,}")
+            lines.append(f"  Total Added:    {total_added:,}")
+            lines.append(f"  Total Modified: {total_modified:,}")
+            lines.append(f"  Total Moved:    {total_moved:,}")
+            lines.append(f"  Total Removed:  {total_removed:,}")
+            if total_errors > 0:
+                lines.append(f"  Total Errors:   {total_errors:,}")
+            lines.append("")
+        
+        return lines
+
+    @staticmethod
+    def _build_scrub_section(
+        scrub_results: list[tuple[str, "ScrubResult"]],
+        include_drive_header: bool = True
+    ) -> list[str]:
+        """Build scrub results section.
+        
+        Args:
+            scrub_results: List of (drive_name, ScrubResult) tuples
+            include_drive_header: Whether to include drive names in output
+            
+        Returns:
+            List of formatted lines
+        """
+        from .scanner import ScrubResult
+        
+        lines = []
+        if not scrub_results:
+            return lines
+            
+        lines.append("=" * 64)
+        lines.append("SCRUB RESULTS" + (" BY DRIVE" if include_drive_header and len(scrub_results) > 1 else ""))
+        lines.append("=" * 64)
+        lines.append("")
+        
+        total_validated = 0
+        total_corrupted = 0
+        total_errors = 0
+        
+        for drive_name, result in scrub_results:
+            if include_drive_header and len(scrub_results) > 1:
+                lines.append(f"Drive: {drive_name}")
+            lines.append(f"  Validated:      {result.files_validated:,} files")
+            lines.append(f"  Corrupted:      {len(result.files_corrupted):,}")
+            if len(result.errors) > 0:
+                lines.append(f"  Errors:         {len(result.errors):,}")
+            lines.append("")
+            
+            total_validated += result.files_validated
+            total_corrupted += len(result.files_corrupted)
+            total_errors += len(result.errors)
+        
+        # Only show totals when multiple drives
+        if len(scrub_results) > 1:
+            lines.append("SCRUB TOTALS:")
+            lines.append(f"  Total Validated: {total_validated:,}")
+            lines.append(f"  Total Corrupted: {total_corrupted:,}")
+            if total_corrupted == 0:
+                lines.append(f"  Status:          ✓ ALL FILES VERIFIED SUCCESSFULLY")
+            else:
+                lines.append(f"  Status:          ⚠ CORRUPTION DETECTED")
+            lines.append("")
+        
+        return lines
+
     def send_consolidated_report(
         self,
         sync_results: list[tuple[str, "SyncResult"]],
@@ -111,20 +252,6 @@ Configuration:
             scrub_results: List of (drive_name, ScrubResult) tuples
             duration_seconds: Total operation duration in seconds
         """
-        from .scanner import SyncResult, ScrubResult
-        
-        # Format duration
-        hours = int(duration_seconds // 3600)
-        minutes = int((duration_seconds % 3600) // 60)
-        seconds = int(duration_seconds % 60)
-        
-        if hours > 0:
-            duration_str = f"{hours} hours {minutes} minutes {seconds} seconds"
-        elif minutes > 0:
-            duration_str = f"{minutes} minutes {seconds} seconds"
-        else:
-            duration_str = f"{seconds} seconds"
-        
         # Determine operation type
         has_sync = len(sync_results) > 0
         has_scrub = len(scrub_results) > 0
@@ -136,7 +263,7 @@ Configuration:
         else:
             operation_type = "SCRUB"
         
-        # Build email body
+        # Build email body using builder functions
         lines = []
         lines.append("╔" + "═" * 62 + "╗")
         lines.append("║" + " " * 10 + "BIT ROT DETECTOR - CONSOLIDATED REPORT" + " " * 13 + "║")
@@ -144,79 +271,12 @@ Configuration:
         lines.append("")
         lines.append(f"Operation: {operation_type}")
         lines.append(f"Drives Processed: {max(len(sync_results), len(scrub_results))}")
-        lines.append(f"Duration: {duration_str}")
+        lines.append(f"Duration: {self._format_duration(duration_seconds)}")
         lines.append("")
         
-        # Sync results section
-        if sync_results:
-            lines.append("=" * 64)
-            lines.append("SYNC RESULTS BY DRIVE")
-            lines.append("=" * 64)
-            lines.append("")
-            
-            total_scanned = 0
-            total_added = 0
-            total_modified = 0
-            total_moved = 0
-            total_removed = 0
-            total_errors = 0
-            
-            for drive_name, result in sync_results:
-                lines.append(f"Drive: {drive_name}")
-                lines.append(f"  Files Scanned:  {result.files_scanned:,}")
-                lines.append(f"  Added:          {result.files_added:,}")
-                lines.append(f"  Modified:       {result.files_modified:,}")
-                lines.append(f"  Moved:          {result.files_moved:,}")
-                lines.append(f"  Removed:        {result.files_removed:,}")
-                lines.append(f"  Errors:         {len(result.errors):,}")
-                lines.append("")
-                
-                total_scanned += result.files_scanned
-                total_added += result.files_added
-                total_modified += result.files_modified
-                total_moved += result.files_moved
-                total_removed += result.files_removed
-                total_errors += len(result.errors)
-            
-            lines.append("SYNC TOTALS:")
-            lines.append(f"  Total Files:    {total_scanned:,}")
-            lines.append(f"  Total Added:    {total_added:,}")
-            lines.append(f"  Total Modified: {total_modified:,}")
-            lines.append(f"  Total Moved:    {total_moved:,}")
-            lines.append(f"  Total Removed:  {total_removed:,}")
-            if total_errors > 0:
-                lines.append(f"  Total Errors:   {total_errors:,}")
-            lines.append("")
-        
-        # Scrub results section
-        if scrub_results:
-            lines.append("=" * 64)
-            lines.append("SCRUB RESULTS BY DRIVE")
-            lines.append("=" * 64)
-            lines.append("")
-            
-            total_validated = 0
-            total_corrupted = 0
-            
-            for drive_name, result in scrub_results:
-                lines.append(f"Drive: {drive_name}")
-                lines.append(f"  Validated:      {result.files_validated:,} files")
-                lines.append(f"  Corrupted:      {len(result.files_corrupted):,}")
-                if len(result.errors) > 0:
-                    lines.append(f"  Errors:         {len(result.errors):,}")
-                lines.append("")
-                
-                total_validated += result.files_validated
-                total_corrupted += len(result.files_corrupted)
-            
-            lines.append("SCRUB TOTALS:")
-            lines.append(f"  Total Validated: {total_validated:,}")
-            lines.append(f"  Total Corrupted: {total_corrupted:,}")
-            if total_corrupted == 0:
-                lines.append(f"  Status:          ✓ ALL FILES VERIFIED SUCCESSFULLY")
-            else:
-                lines.append(f"  Status:          ⚠ CORRUPTION DETECTED")
-            lines.append("")
+        # Use builder functions for sections
+        lines.extend(self._build_sync_section(sync_results, include_drive_header=True))
+        lines.extend(self._build_scrub_section(scrub_results, include_drive_header=True))
         
         lines.append("=" * 64)
         

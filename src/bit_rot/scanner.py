@@ -195,36 +195,23 @@ class Scanner:
                 )
 
                 if moved_from:
-                    # Verify hash to confirm it's the same file
-                    try:
-                        current_hash = self.hasher.compute_hash(Path(current_path))
-                        old_record = db_files[moved_from]
-
-                        if current_hash == old_record.hash:
-                            # File was moved - update path but preserve metadata
-                            logger.info(f"{log_prefix}Detected move: {moved_from} -> {current_path}")
-                            db.stage_file_update(
-                                abs_path=current_path,
-                                hash=old_record.hash,
-                                file_size=size,
-                                mtime=mtime,
-                                added_at=old_record.added_at,
-                                last_scrubbed=old_record.last_scrubbed,
-                                scrub_count=old_record.scrub_count,
-                            )
-                            # Mark old path for removal
-                            db.stage_file_removal(moved_from)
-                            seen_db_paths.add(moved_from)
-                            files_moved += 1
-                        else:
-                            # Hash mismatch - treat as new file
-                            self._add_new_file(current_path, current_hash, size, db)
-                            files_added += 1
-
-                    except (PermissionError, OSError) as e:
-                        error_msg = f"Error hashing {current_path}: {e}"
-                        logger.warning(f"{error_msg}")
-                        errors.append(error_msg)
+                    # Size and mtime already matched in _find_moved_file
+                    # No need to rehash - the file is uniquely identified
+                    old_record = db_files[moved_from]
+                    logger.info(f"{log_prefix}Detected move: {moved_from} -> {current_path}")
+                    db.stage_file_update(
+                        abs_path=current_path,
+                        hash=old_record.hash,  # Reuse existing hash
+                        file_size=size,
+                        mtime=mtime,
+                        added_at=old_record.added_at,
+                        last_scrubbed=old_record.last_scrubbed,
+                        scrub_count=old_record.scrub_count,
+                    )
+                    # Mark old path for removal
+                    db.stage_file_removal(moved_from)
+                    seen_db_paths.add(moved_from)
+                    files_moved += 1
                 else:
                     # New file - compute hash and add
                     try:
