@@ -20,18 +20,14 @@ from .scanner import Scanner
 load_dotenv()
 
 
-def main(stop_event: threading.Event = None) -> int:
+def main() -> int:
     """Main entry point for CLI.
-
-    Args:
-        stop_event: Optional event to signal cancellation
 
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    # Create valid stop event if not provided
-    if stop_event is None:
-        stop_event = threading.Event()
+    # Create valid stop event for graceful shutdown
+    stop_event = threading.Event()
 
     # Parse arguments first (before logging setup)
     parser = argparse.ArgumentParser(
@@ -146,19 +142,4 @@ def main(stop_event: threading.Event = None) -> int:
 
 
 if __name__ == "__main__":
-    import signal
-
-    # Global stop event for signal handler
-    _stop_event = threading.Event()
-
-    def service_shutdown(signum, frame):
-        """Handle shutdown signals."""
-        print(f"\nCaught signal {signum}, shutting down...")
-        _stop_event.set()
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, service_shutdown)
-    signal.signal(signal.SIGTERM, service_shutdown)
-
-    # Pass the event into main
-    sys.exit(main(stop_event=_stop_event))
+    sys.exit(main())
