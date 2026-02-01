@@ -9,6 +9,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Separator width
+SEPARATOR_WIDTH = 36
+
 
 @dataclass
 class EmailConfig:
@@ -119,7 +122,7 @@ Configuration:
 
     @staticmethod
     def _build_header(title: str) -> list[str]:
-        """Build a header section for emails (24 chars for mobile).
+        """Build a header section for emails.
 
         Args:
             title: Header title text
@@ -128,20 +131,20 @@ Configuration:
             List of header lines
         """
         return [
-            "=" * 24,
+            "=" * SEPARATOR_WIDTH,
             title,
-            "=" * 24,
+            "=" * SEPARATOR_WIDTH,
             "",
         ]
 
     @staticmethod
     def _build_separator() -> str:
-        """Build a separator line for emails (24 chars for mobile).
+        """Build a separator line for emails.
 
         Returns:
             Separator string
         """
-        return "=" * 24
+        return "=" * SEPARATOR_WIDTH
 
     @staticmethod
     def _build_sync_section(
