@@ -3,7 +3,7 @@
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Optional
 
@@ -152,27 +152,54 @@ def process_drives_concurrently(
                 for path in target_paths
             }
 
-            # Collect results as they complete
-            for future in as_completed(futures):
-                drive_name, drive_health, sync_result, scrub_result, error = (
-                    future.result()
+            pending_futures = set(futures.keys())
+
+            while pending_futures:
+                # Check for stop signal
+                if stop_event and stop_event.is_set():
+                    logger.warning("Stop signaled, cancelling pending tasks...")
+                    for f in pending_futures:
+                        f.cancel()
+                    break
+
+                # Wait for any future to complete or timeout to check stop_event
+                # Use a short timeout (e.g. 0.5s) to ensure responsiveness to signals on Windows
+                done, not_done = wait(
+                    pending_futures, return_when=FIRST_COMPLETED, timeout=0.5
                 )
 
-                # Always collect drive health
-                all_drive_health.append(drive_health)
+                if not done:
+                    # Timeout reached, loop back to check stop_event
+                    continue
 
-                if error:
-                    errors.append(error)
-                else:
-                    if sync_result:
-                        all_sync_results.append((drive_name, sync_result))
-                    if scrub_result:
-                        all_scrub_results.append((drive_name, scrub_result))
-                        # Log bit rot detection
-                        if scrub_result.files_corrupted:
-                            logger.critical(
-                                f"BIT ROT DETECTED on {drive_name}: {len(scrub_result.files_corrupted)} corrupted files"
-                            )
+                # Update pending futures
+                pending_futures = not_done
+
+                # Process completed futures
+                for future in done:
+                    try:
+                        drive_name, drive_health, sync_result, scrub_result, error = (
+                            future.result()
+                        )
+
+                        # Always collect drive health
+                        all_drive_health.append(drive_health)
+
+                        if error:
+                            errors.append(error)
+                        else:
+                            if sync_result:
+                                all_sync_results.append((drive_name, sync_result))
+                            if scrub_result:
+                                all_scrub_results.append((drive_name, scrub_result))
+                                # Log bit rot detection
+                                if scrub_result.files_corrupted:
+                                    logger.critical(
+                                        f"BIT ROT DETECTED on {drive_name}: {len(scrub_result.files_corrupted)} corrupted files"
+                                    )
+                    except Exception as e:
+                        logger.error(f"Error retrieving future result: {e}")
+                        errors.append(str(e))
 
     except KeyboardInterrupt:
         logger.warning("Interrupted! Stopping all workers...")
