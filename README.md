@@ -1,6 +1,6 @@
 # Bit Rot Detector
 
-Production-grade utility for detecting file corruption (bit rot) using BLAKE3 hashing with intelligent move detection and SMTP2GO notifications.
+A utility for detecting file corruption (bit rot) using BLAKE3 hashing with intelligent move detection and SMTP2GO notifications.
 
 ## Features
 
@@ -66,7 +66,7 @@ cp .env.example .env
 # Target directory(ies) to monitor
 # Single drive:
 TARGET_DIRECTORY=/path/to/monitor
-# Multiple drives (comma or colon separated):
+# Multiple drives (comma separated):
 # TARGET_DIRECTORY=/path/to/drive1,/path/to/drive2
 
 # Performance
