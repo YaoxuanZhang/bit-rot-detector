@@ -37,13 +37,9 @@ def run_bitrot(
     env["SCRUB_PERCENTAGE"] = "100"
 
     if disable_notifications:
-        env["NOTIFY_SYNC_SUCCESS"] = "false"
-        env["NOTIFY_SCRUB_SUCCESS"] = "false"
-        env["NOTIFY_CRITICAL_FAILURES"] = "false"
+        env["NOTIFY_ON_SUCCESS"] = "false"
     else:
-        env["NOTIFY_SYNC_SUCCESS"] = "true"
-        env["NOTIFY_SCRUB_SUCCESS"] = "true"
-        env["NOTIFY_CRITICAL_FAILURES"] = "true"
+        env["NOTIFY_ON_SUCCESS"] = "true"
 
     if extra_env:
         env.update(extra_env)
@@ -270,7 +266,7 @@ def scenario_8_canary_failure():
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
 
     print("Running initial sync...")
-    run_bitrot("--sync", test_dir)
+    run_bitrot("--sync", test_dir, disable_notifications=True)
 
     # Remove canary
     print("\nRemoving canary file to simulate unmounted drive...")
@@ -306,12 +302,12 @@ def scenario_9_multi_drive():
     (test_dir2 / ".bitrot-canary").touch()
 
     # Create files on drive 1
-    print("\nCreating files on Drive 1 (WD_Elements)...")
+    print("\nCreating files on Drive 1...")
     for i in range(8):
         (test_dir1 / f"doc_{i}.txt").write_text(f"Drive 1 content {i}\n" * 100)
 
     # Create files on drive 2
-    print("Creating files on Drive 2 (Seagate_Backup)...")
+    print("Creating files on Drive 2...")
     for i in range(5):
         (test_dir2 / f"backup_{i}.txt").write_text(f"Drive 2 content {i}\n" * 100)
 
