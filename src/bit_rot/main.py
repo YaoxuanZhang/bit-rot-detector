@@ -4,7 +4,10 @@ import argparse
 import logging
 import os
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -13,28 +16,47 @@ from bit_rot.logging_config import setup_logging
 from .database import Database
 from .hasher import Hasher
 from .mailer import EmailConfig, Mailer
-from .scanner import Scanner
+from .scanner import Scanner, SyncResult, ScrubResult
 
 # Load environment variables
 load_dotenv()
 
 
-def load_config() -> tuple[Path, EmailConfig, float, str, int]:
+def load_config() -> tuple[list[Path], EmailConfig, float, str, int, int]:
     """Load configuration from environment variables.
 
     Returns:
-        Tuple of (target_directory, email_config, scrub_percentage, scrub_frequency, log_retention_days)
+        Tuple of (target_paths, email_config, scrub_percentage, scrub_frequency, log_retention_days, max_workers)
 
     Raises:
         ValueError: If required configuration is missing
     """
-    target_dir = os.getenv("TARGET_DIRECTORY")
-    if not target_dir:
+    target_dirs_str = os.getenv("TARGET_DIRECTORY")
+    if not target_dirs_str:
         raise ValueError("TARGET_DIRECTORY not set in environment")
 
-    target_path = Path(target_dir)
-    if not target_path.exists():
-        raise ValueError(f"TARGET_DIRECTORY does not exist: {target_dir}")
+    # Parse comma-separated paths
+    target_dirs = [d.strip() for d in target_dirs_str.split(",") if d.strip()]
+    if not target_dirs:
+        raise ValueError("TARGET_DIRECTORY is empty")
+
+    # Validate and convert to Path objects
+    target_paths = []
+    for target_dir in target_dirs:
+        target_path = Path(target_dir)
+        if not target_path.exists():
+            raise ValueError(f"Target directory does not exist: {target_dir}")
+        target_paths.append(target_path)
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_paths = []
+    for path in target_paths:
+        abs_path = path.resolve()
+        if abs_path not in seen:
+            seen.add(abs_path)
+            unique_paths.append(path)
+    target_paths = unique_paths
 
     # Email configuration
     email_config = EmailConfig(
@@ -61,107 +83,84 @@ def load_config() -> tuple[Path, EmailConfig, float, str, int]:
     # Log retention configuration
     log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "7"))
 
-    return target_path, email_config, scrub_percentage, scrub_frequency, log_retention_days
+    # Worker configuration
+    max_workers = int(os.getenv("MAX_WORKERS", "4"))
+    if max_workers < 1:
+        raise ValueError(f"MAX_WORKERS must be at least 1, got {max_workers}")
+
+    return target_paths, email_config, scrub_percentage, scrub_frequency, log_retention_days, max_workers
 
 
-def run_sync(target_path: Path, db: Database, scanner: Scanner, mailer: Mailer) -> bool:
-    """Run sync operation.
-
+def process_drive(
+    target_path: Path,
+    scanner: Scanner,
+    run_sync_op: bool,
+    run_scrub_op: bool,
+    scrub_percentage: float,
+    scrub_frequency: str,
+) -> tuple[str, Optional[SyncResult], Optional[ScrubResult], Optional[str]]:
+    """Process a single drive (sync and/or scrub).
+    
     Args:
-        target_path: Target directory to scan
-        db: Database instance
+        target_path: Path to the drive to process
         scanner: Scanner instance
-        mailer: Mailer instance
-
+        run_sync_op: Whether to run sync operation
+        run_scrub_op: Whether to run scrub operation
+        scrub_percentage: Percentage of files to scrub
+        scrub_frequency: Scrub frequency setting
+    
     Returns:
-        True if successful, False otherwise
+        Tuple of (drive_name, sync_result, scrub_result, error_message)
     """
+    drive_name = target_path.name
     logger = logging.getLogger(__name__)
-    logger.info("========== STARTING SYNC OPERATION ==========")
-
+    logger.info(f"[{drive_name}] Starting processing")
+    
+    db = None
+    sync_result = None
+    scrub_result = None
+    
     try:
         # Canary check
         if not scanner.check_canary(target_path):
-            error_msg = f"Canary check failed: .bitrot-canary not found in {target_path}"
-            logger.critical(f"{error_msg}")
-            mailer.send_error_notification(error_msg)
-            return False
-
-        # Perform sync with atomic transaction
-        with db.transaction():
-            result = scanner.sync_directory(target_path, db)
-
-        logger.info(
-            f"Sync operation completed - "
-            f"Scanned: {result.files_scanned}, Added: {result.files_added}, "
-            f"Modified: {result.files_modified}, Moved: {result.files_moved}, "
-            f"Removed: {result.files_removed}"
-        )
-
-        # Send notification
-        mailer.send_sync_notification(
-            files_added=result.files_added,
-            files_modified=result.files_modified,
-            files_moved=result.files_moved,
-            files_removed=result.files_removed,
-            files_scanned=result.files_scanned,
-            errors=result.errors,
-        )
-
-        return True
-
+            error_msg = f"[{drive_name}] Canary check failed: .bitrot-canary not found in {target_path}"
+            logger.critical(error_msg)
+            return (drive_name, None, None, error_msg)
+        
+        # Initialize database
+        db_path = target_path / "bitrot.db"
+        db = Database(db_path)
+        
+        # Sync operation
+        if run_sync_op:
+            logger.info(f"[{drive_name}] Starting sync operation")
+            with db.transaction():
+                sync_result = scanner.sync_directory(target_path, db, drive_name)
+            logger.info(
+                f"[{drive_name}] Sync completed - Scanned: {sync_result.files_scanned}, "
+                f"Added: {sync_result.files_added}, Modified: {sync_result.files_modified}, "
+                f"Moved: {sync_result.files_moved}, Removed: {sync_result.files_removed}"
+            )
+        
+        # Scrub operation
+        if run_scrub_op:
+            logger.info(f"[{drive_name}] Starting scrub operation")
+            scrub_result = scanner.scrub_files(db, scrub_percentage, scrub_frequency, drive_name)
+            logger.info(
+                f"[{drive_name}] Scrub completed - Validated: {scrub_result.files_validated}, "
+                f"Corrupted: {len(scrub_result.files_corrupted)}"
+            )
+        
+        logger.info(f"[{drive_name}] Processing completed successfully")
+        return (drive_name, sync_result, scrub_result, None)
+    
     except Exception as e:
-        error_msg = f"Sync operation failed: {e}"
-        logger.critical(f"{error_msg}", exc_info=True)
-        mailer.send_error_notification(error_msg)
-        return False
-
-
-def run_scrub(
-    db: Database,
-    scanner: Scanner,
-    mailer: Mailer,
-    scrub_percentage: float,
-    scrub_frequency: str,
-) -> bool:
-    """Run scrub operation.
-
-    Args:
-        db: Database instance
-        scanner: Scanner instance
-        mailer: Mailer instance
-        scrub_percentage: Percentage of files to scrub
-        scrub_frequency: Scrub frequency (daily/weekly/monthly)
-
-    Returns:
-        True if successful, False otherwise
-    """
-    logger = logging.getLogger(__name__)
-    logger.info("========== STARTING SCRUB OPERATION ==========")
-
-    try:
-        result = scanner.scrub_files(db, scrub_percentage, scrub_frequency)
-
-        logger.info(
-            f"Scrub operation completed - "
-            f"Validated: {result.files_validated}, Corrupted: {len(result.files_corrupted)}"
-        )
-
-        # Send notification
-        mailer.send_scrub_notification(
-            files_validated=result.files_validated,
-            files_corrupted=result.files_corrupted,
-            errors=result.errors,
-        )
-
-        # Return False if corruption detected
-        return len(result.files_corrupted) == 0
-
-    except Exception as e:
-        error_msg = f"Scrub operation failed: {e}"
-        logger.critical(f"{error_msg}", exc_info=True)
-        mailer.send_error_notification(error_msg)
-        return False
+        error_msg = f"[{drive_name}] Processing failed: {e}"
+        logger.critical(error_msg, exc_info=True)
+        return (drive_name, None, None, error_msg)
+    finally:
+        if db:
+            db.close()
 
 
 def main() -> int:
@@ -194,16 +193,17 @@ def main() -> int:
 
     try:
         # Load configuration
-        target_path, email_config, scrub_percentage, scrub_frequency, log_retention_days = load_config()
+        target_paths,  email_config, scrub_percentage, scrub_frequency, log_retention_days, max_workers = load_config()
         
         # Setup logging with rotation
         setup_logging(log_retention_days)
         logger = logging.getLogger(__name__)
         
         logger.info("Loading configuration from environment")
-        logger.info(f"Target directory: {target_path}")
+        logger.info(f"Target directories: {', '.join(str(p) for p in target_paths)}")
         logger.info(f"Scrub settings: {scrub_percentage}%, {scrub_frequency}")
         logger.info(f"Log retention: {log_retention_days} days")
+        logger.info(f"Max workers: {max_workers}")
 
         # Initialize components
         mailer = Mailer(email_config)
@@ -218,10 +218,6 @@ def main() -> int:
                 logger.error("Failed to send test email")
                 return 1
 
-        # Initialize database (schema created in __init__)
-        db_path = target_path / "bitrot.db"
-        db = Database(db_path)
-
         # Initialize scanner
         hasher = Hasher()
         scanner = Scanner(hasher)
@@ -230,27 +226,93 @@ def main() -> int:
         run_sync_op = args.sync or not args.scrub
         run_scrub_op = args.scrub or not args.sync
 
-        success = True
-
-        # Run sync
-        if run_sync_op:
-            if not run_sync(target_path, db, scanner, mailer):
-                success = False
-
-        # Run scrub
-        if run_scrub_op:
-            if not run_scrub(db, scanner, mailer, scrub_percentage, scrub_frequency):
-                success = False
-
-        # Cleanup
-        db.close()
-
-        if success:
+        # Process drives concurrently
+        start_time = time.time()
+        all_sync_results = []
+        all_scrub_results = []
+        errors = []
+        
+        # Determine worker count (allocate one worker per drive up to MAX_WORKERS)
+        num_workers = min(max_workers, len(target_paths))
+        logger.info(f"Processing {len(target_paths)} drive(s) with {num_workers} worker(s)")
+        
+        # Process drives concurrently
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all drive processing tasks
+            futures = {
+                executor.submit(
+                    process_drive,
+                    path,
+                    scanner,
+                    run_sync_op,
+                    run_scrub_op,
+                    scrub_percentage,
+                    scrub_frequency
+                ): path
+                for path in target_paths
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(futures):
+                drive_name, sync_result, scrub_result, error = future.result()
+                
+                if error:
+                    errors.append(error)
+                    # Send immediate error notification
+                    mailer.send_error_notification(error)
+                else:
+                    if sync_result:
+                        all_sync_results.append((drive_name, sync_result))
+                    if scrub_result:
+                        all_scrub_results.append((drive_name, scrub_result))
+                        # Check for bit rot - send immediate critical alert
+                        if scrub_result.files_corrupted:
+                            logger.critical(f"BIT ROT DETECTED on {drive_name}: {len(scrub_result.files_corrupted)} corrupted files")
+                            mailer.send_scrub_notification(
+                                files_validated=scrub_result.files_validated,
+                                files_corrupted=scrub_result.files_corrupted,
+                                errors=scrub_result.errors,
+                            )
+        
+        duration = time.time() - start_time
+        
+        # Send consolidated email if no errors and no bit rot
+        has_bit_rot = any(len(r.files_corrupted) > 0 for _, r in all_scrub_results)
+        
+        if not errors and not has_bit_rot and (all_sync_results or all_scrub_results):
+            # Send consolidated report
+            if run_sync_op and run_scrub_op and all_sync_results and all_scrub_results:
+                # Both operations ran - send consolidated report
+                logger.info("Sending consolidated report")
+                mailer.send_consolidated_report(all_sync_results, all_scrub_results, duration)
+            else:
+                # Only one operation ran - send individual notifications
+                for drive_name, sync_result in all_sync_results:
+                    mailer.send_sync_notification(
+                        files_added=sync_result.files_added,
+                        files_modified=sync_result.files_modified,
+                        files_moved=sync_result.files_moved,
+                        files_removed=sync_result.files_removed,
+                        files_scanned=sync_result.files_scanned,
+                        errors=sync_result.errors,
+                    )
+                for drive_name, scrub_result in all_scrub_results:
+                    if not scrub_result.files_corrupted:  # Only send if not already sent as critical
+                        mailer.send_scrub_notification(
+                            files_validated=scrub_result.files_validated,
+                            files_corrupted=scrub_result.files_corrupted,
+                            errors=scrub_result.errors,
+                        )
+        
+        if errors:
+            logger.warning(f"========== OPERATIONS COMPLETED WITH {len(errors)} ERROR(S) ==========")
+            return 1
+        elif has_bit_rot:
+            logger.critical("========== BIT ROT DETECTED ==========")
+            return 1
+        else:
             logger.info("========== ALL OPERATIONS COMPLETED SUCCESSFULLY ==========")
             return 0
-        else:
-            logger.warning("========== OPERATIONS COMPLETED WITH ERRORS ==========")
-            return 1
 
     except ValueError as e:
         logger.critical(f"Configuration error: {e}")

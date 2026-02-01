@@ -98,6 +98,156 @@ Configuration:
         logger.info("Sending test email")
         return self.send_notification(subject, body)
 
+    def send_consolidated_report(
+        self,
+        sync_results: list[tuple[str, "SyncResult"]],
+        scrub_results: list[tuple[str, "ScrubResult"]],
+        duration_seconds: float,
+    ) -> None:
+        """Send consolidated report for multi-drive operations.
+
+        Args:
+            sync_results: List of (drive_name, SyncResult) tuples
+            scrub_results: List of (drive_name, ScrubResult) tuples
+            duration_seconds: Total operation duration in seconds
+        """
+        from .scanner import SyncResult, ScrubResult
+        
+        # Format duration
+        hours = int(duration_seconds // 3600)
+        minutes = int((duration_seconds % 3600) // 60)
+        seconds = int(duration_seconds % 60)
+        
+        if hours > 0:
+            duration_str = f"{hours} hours {minutes} minutes {seconds} seconds"
+        elif minutes > 0:
+            duration_str = f"{minutes} minutes {seconds} seconds"
+        else:
+            duration_str = f"{seconds} seconds"
+        
+        # Determine operation type
+        has_sync = len(sync_results) > 0
+        has_scrub = len(scrub_results) > 0
+        
+        if has_sync and has_scrub:
+            operation_type = "SYNC + SCRUB"
+        elif has_sync:
+            operation_type = "SYNC"
+        else:
+            operation_type = "SCRUB"
+        
+        # Build email body
+        lines = []
+        lines.append("╔" + "═" * 62 + "╗")
+        lines.append("║" + " " * 10 + "BIT ROT DETECTOR - CONSOLIDATED REPORT" + " " * 13 + "║")
+        lines.append("╚" + "═" * 62 + "╝")
+        lines.append("")
+        lines.append(f"Operation: {operation_type}")
+        lines.append(f"Drives Processed: {max(len(sync_results), len(scrub_results))}")
+        lines.append(f"Duration: {duration_str}")
+        lines.append("")
+        
+        # Sync results section
+        if sync_results:
+            lines.append("=" * 64)
+            lines.append("SYNC RESULTS BY DRIVE")
+            lines.append("=" * 64)
+            lines.append("")
+            
+            total_scanned = 0
+            total_added = 0
+            total_modified = 0
+            total_moved = 0
+            total_removed = 0
+            total_errors = 0
+            
+            for drive_name, result in sync_results:
+                lines.append(f"Drive: {drive_name}")
+                lines.append(f"  Files Scanned:  {result.files_scanned:,}")
+                lines.append(f"  Added:          {result.files_added:,}")
+                lines.append(f"  Modified:       {result.files_modified:,}")
+                lines.append(f"  Moved:          {result.files_moved:,}")
+                lines.append(f"  Removed:        {result.files_removed:,}")
+                lines.append(f"  Errors:         {len(result.errors):,}")
+                lines.append("")
+                
+                total_scanned += result.files_scanned
+                total_added += result.files_added
+                total_modified += result.files_modified
+                total_moved += result.files_moved
+                total_removed += result.files_removed
+                total_errors += len(result.errors)
+            
+            lines.append("SYNC TOTALS:")
+            lines.append(f"  Total Files:    {total_scanned:,}")
+            lines.append(f"  Total Added:    {total_added:,}")
+            lines.append(f"  Total Modified: {total_modified:,}")
+            lines.append(f"  Total Moved:    {total_moved:,}")
+            lines.append(f"  Total Removed:  {total_removed:,}")
+            if total_errors > 0:
+                lines.append(f"  Total Errors:   {total_errors:,}")
+            lines.append("")
+        
+        # Scrub results section
+        if scrub_results:
+            lines.append("=" * 64)
+            lines.append("SCRUB RESULTS BY DRIVE")
+            lines.append("=" * 64)
+            lines.append("")
+            
+            total_validated = 0
+            total_corrupted = 0
+            
+            for drive_name, result in scrub_results:
+                lines.append(f"Drive: {drive_name}")
+                lines.append(f"  Validated:      {result.files_validated:,} files")
+                lines.append(f"  Corrupted:      {len(result.files_corrupted):,}")
+                if len(result.errors) > 0:
+                    lines.append(f"  Errors:         {len(result.errors):,}")
+                lines.append("")
+                
+                total_validated += result.files_validated
+                total_corrupted += len(result.files_corrupted)
+            
+            lines.append("SCRUB TOTALS:")
+            lines.append(f"  Total Validated: {total_validated:,}")
+            lines.append(f"  Total Corrupted: {total_corrupted:,}")
+            if total_corrupted == 0:
+                lines.append(f"  Status:          ✓ ALL FILES VERIFIED SUCCESSFULLY")
+            else:
+                lines.append(f"  Status:          ⚠ CORRUPTION DETECTED")
+            lines.append("")
+        
+        lines.append("=" * 64)
+        
+        body = "\n".join(lines)
+        
+        # Determine subject
+        num_drives = max(len(sync_results), len(scrub_results))
+        if num_drives > 1:
+            subject = f"Bit Rot Detector - {num_drives} Drives Processed Successfully"
+        else:
+            if has_sync and has_scrub:
+                subject = "Bit Rot Detector - Sync + Scrub Completed"
+            elif has_sync:
+                total_files = sync_results[0][1].files_scanned if sync_results else 0
+                subject = f"Bit Rot Detector - {total_files:,} Files Synced"
+            else:
+                total_files = scrub_results[0][1].files_validated if scrub_results else 0
+                subject = f"Bit Rot Detector - {total_files:,} Files Validated"
+        
+        # Send email if notifications are enabled
+        should_send = False
+        if has_sync and self.config.notify_sync_success:
+            should_send = True
+        if has_scrub and self.config.notify_scrub_success:
+            should_send = True
+        
+        if should_send:
+            self.send_notification(subject, body)
+        else:
+            logger.info("Consolidated report not sent (notifications disabled)")
+
     @staticmethod
     def format_summary_report(
         sync_stats: Optional[dict] = None,
