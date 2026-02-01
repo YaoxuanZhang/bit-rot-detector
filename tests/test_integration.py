@@ -335,6 +335,109 @@ def scenario_9_multi_drive():
     print("  - Body should show separate sections for each drive")
     print("  - Drive 1: 3 modified files, X files scrubbed")
     print("  - Drive 2: 2 removed files, Y files scrubbed")
+    input("\nPress Enter to continue to next scenario...")
+
+
+def scenario_10_drive_path_change():
+    """Scenario 10: Files moving from one drive to another."""
+    print("\n" + "=" * 80)
+    print("SCENARIO 10: Cross-Drive File Moves (DriveX -> DriveY)")
+    print("=" * 80)
+
+    # Create two test directories representing two drives
+    test_dir1 = Path("test_email_scenarios/driveX")
+    test_dir2 = Path("test_email_scenarios/driveY")
+
+    # Clean up if exists
+    if Path("test_email_scenarios").exists():
+        shutil.rmtree("test_email_scenarios")
+
+    test_dir1.mkdir(parents=True)
+    test_dir2.mkdir(parents=True)
+
+    # Create canaries
+    (test_dir1 / ".bitrot-canary").touch()
+    (test_dir2 / ".bitrot-canary").touch()
+
+    # Create files on driveX
+    print("\nCreating files on DriveX...")
+    for i in range(6):
+        (test_dir1 / f"media_{i}.dat").write_text(f"Media file {i}\n" * 150)
+
+    # Create some files on driveY
+    print("Creating files on DriveY...")
+    for i in range(3):
+        (test_dir2 / f"archive_{i}.dat").write_text(f"Archive file {i}\n" * 150)
+
+    print("Running initial sync on both drives...")
+    extra_env = {"TARGET_DIRECTORY": f"{test_dir1.absolute()},{test_dir2.absolute()}"}
+
+    run_bitrot("--sync", test_dir=None, extra_env=extra_env, disable_notifications=True)
+
+    # Move files from driveX to driveY (simulate moving files between drives)
+    print("\nMoving 4 files from DriveX to DriveY...")
+    time.sleep(2)
+    for i in range(4):
+        source = test_dir1 / f"media_{i}.dat"
+        dest = test_dir2 / f"media_{i}.dat"
+        # Use shutil.move to preserve mtime
+        shutil.move(str(source), str(dest))
+
+    print("Running sync to detect cross-drive moves...")
+    run_bitrot("--sync", test_dir=None, extra_env=extra_env)
+
+    print("\nCheck your email:")
+    print("  - Should show 4 files moved (from DriveX to DriveY)")
+    print("  - DriveX: Should show files as moved (not as removed)")
+    print("  - DriveY: Should detect the moved files (not as new)")
+    input("\nPress Enter to continue to next scenario...")
+
+
+def scenario_11_drive_rename():
+    """Scenario 11: Drive rename detection (driveX renamed to driveY)."""
+    print("\n" + "=" * 80)
+    print("SCENARIO 11: Drive Rename Detection (DriveX -> DriveY)")
+    print("=" * 80)
+
+    # Create initial test directory representing driveX
+    test_dir_x = Path("test_email_scenarios/driveX")
+
+    # Clean up if exists
+    if Path("test_email_scenarios").exists():
+        shutil.rmtree("test_email_scenarios")
+
+    test_dir_x.mkdir(parents=True)
+
+    # Create canary
+    (test_dir_x / ".bitrot-canary").touch()
+
+    # Create files on driveX
+    print("\nCreating files on DriveX...")
+    for i in range(10):
+        (test_dir_x / f"document_{i}.pdf").write_text(f"Document content {i}\n" * 200)
+
+    # Create subdirectory with files
+    subdir = test_dir_x / "photos"
+    subdir.mkdir()
+    for i in range(5):
+        (subdir / f"photo_{i}.jpg").write_text(f"Photo data {i}\n" * 100)
+
+    print("Running initial sync on DriveX...")
+    run_bitrot("--sync", test_dir_x, disable_notifications=True)
+
+    # Simulate drive rename: rename the directory from driveX to driveY
+    print("\nSimulating drive rename: DriveX -> DriveY...")
+    test_dir_y = Path("test_email_scenarios/driveY")
+    test_dir_x.rename(test_dir_y)
+
+    # Now run sync pointing to driveY (the renamed drive)
+    print("Running sync on DriveY (after rename)...")
+    run_bitrot("--sync", test_dir_y)
+
+    print("\nCheck your email:")
+    print("  - Should show 15 files moved (10 documents + 5 photos)")
+    print("  - All files should be detected as moved, not as removed+new")
+    print("  - Drive path change: driveX -> driveY for all files")
     input("\nPress Enter to finish...")
 
 
@@ -367,6 +470,8 @@ def main():
         "7": ("Bit Rot Detection", scenario_7_bit_rot),
         "8": ("Canary Failure", scenario_8_canary_failure),
         "9": ("Multi-Drive Sync+Scrub", scenario_9_multi_drive),
+        "10": ("Cross-Drive File Moves", scenario_10_drive_path_change),
+        "11": ("Drive Rename Detection", scenario_11_drive_rename),
     }
 
     print("\nAvailable test scenarios:")
