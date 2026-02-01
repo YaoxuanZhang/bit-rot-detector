@@ -1,8 +1,25 @@
 """Logging configuration for Bit Rot Detector."""
 
 import logging
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
+
+
+# Thread-local storage for context
+thread_local = threading.local()
+
+
+class DirectoryContextFilter(logging.Filter):
+    """Injects directory context into log records."""
+
+    def filter(self, record):
+        """Add directory context to the record if available."""
+        if hasattr(thread_local, "directory"):
+            record.directory = f" [{thread_local.directory}]"
+        else:
+            record.directory = ""
+        return True
 
 
 def setup_logging(log_retention_days: int = 7) -> None:
@@ -23,7 +40,8 @@ def setup_logging(log_retention_days: int = 7) -> None:
     cleanup_old_logs(logs_dir, log_retention_days)
 
     # Include logger name (module) in format for debugging
-    log_format = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
+    # Add directory context if available
+    log_format = "[%(asctime)s] [%(levelname)s] [%(name)s]%(directory)s %(message)s"
     date_format = "%Y-%m-%d %H:%M:%S"
 
     # Create logger
@@ -33,11 +51,15 @@ def setup_logging(log_retention_days: int = 7) -> None:
     # Clear any existing handlers to avoid duplicates
     root_logger.handlers.clear()
 
+    # Create context filter
+    context_filter = DirectoryContextFilter()
+
     # Console handler (INFO and above)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_formatter = logging.Formatter(log_format, date_format)
     console_handler.setFormatter(console_formatter)
+    console_handler.addFilter(context_filter)
     root_logger.addHandler(console_handler)
 
     # File handler (DEBUG and above) - timestamped file
@@ -45,6 +67,7 @@ def setup_logging(log_retention_days: int = 7) -> None:
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(log_format, date_format)
     file_handler.setFormatter(file_formatter)
+    file_handler.addFilter(context_filter)
     root_logger.addHandler(file_handler)
 
     logging.info(f"Logging to: {log_file}")

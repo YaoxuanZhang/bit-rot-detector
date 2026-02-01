@@ -65,9 +65,7 @@ class Scanner:
 
         return exists
 
-    def sync_directory(
-        self, root_path: Path, db: Database, drive_name: str = ""
-    ) -> SyncResult:
+    def sync_directory(self, root_path: Path, db: Database) -> SyncResult:
         """Sync directory with database (Phases 1-3).
 
         Phase 1: Walk directory and record file metadata
@@ -77,13 +75,11 @@ class Scanner:
         Args:
             root_path: Root directory to scan
             db: Database instance
-            drive_name: Optional drive identifier for logging
 
         Returns:
             SyncResult with operation statistics
         """
-        log_prefix = f"[{drive_name}] " if drive_name else ""
-        logger.info(f"{log_prefix}Starting sync operation for: {root_path}")
+        logger.info(f"Starting sync operation for: {root_path}")
         session_start = datetime.now().isoformat()
 
         files_scanned = 0
@@ -95,10 +91,10 @@ class Scanner:
 
         # Get existing files from database
         db_files = db.get_all_files()
-        logger.info(f"{log_prefix}Loaded {len(db_files)} existing files from database")
+        logger.info(f"Loaded {len(db_files)} existing files from database")
 
         # Phase 1: Walk directory tree (don't follow symlinks to avoid loops)
-        logger.info(f"{log_prefix}Phase 1: Walking directory tree")
+        logger.info("Phase 1: Walking directory tree")
         current_files: dict[str, tuple[int, float]] = {}  # path -> (size, mtime)
 
         # System folders to skip (Windows-specific)
@@ -132,17 +128,17 @@ class Scanner:
                     files_scanned += 1
 
                     if files_scanned % 1000 == 0:
-                        logger.info(f"{log_prefix}Scanned {files_scanned} files...")
+                        logger.info(f"Scanned {files_scanned} files...")
 
                 except (PermissionError, OSError) as e:
                     error_msg = f"Error accessing {filepath}: {e}"
                     logger.warning(f"{error_msg}")
                     errors.append(error_msg)
 
-        logger.info(f"{log_prefix}Phase 1 complete: Scanned {files_scanned} files")
+        logger.info(f"Phase 1 complete: Scanned {files_scanned} files")
 
         # Phase 2: Process files and detect moves
-        logger.info(f"{log_prefix}Phase 2: Processing files and detecting moves")
+        logger.info("Phase 2: Processing files and detecting moves")
 
         # Track which DB files we've seen
         seen_db_paths = set()
@@ -160,7 +156,7 @@ class Scanner:
                     # File was modified - re-compute hash
                     try:
                         logger.info(
-                            f"{log_prefix}Detected modification: {current_path} "
+                            f"Detected modification: {current_path} "
                             f"(size: {record.file_size} -> {size}, "
                             f"mtime changed: {mtime_changed})"
                         )
@@ -203,9 +199,7 @@ class Scanner:
                     # Size and mtime already matched in _find_moved_file
                     # No need to rehash - the file is uniquely identified
                     old_record = db_files[moved_from]
-                    logger.info(
-                        f"{log_prefix}Detected move: {moved_from} -> {current_path}"
-                    )
+                    logger.info(f"Detected move: {moved_from} -> {current_path}")
                     db.stage_file_update(
                         abs_path=current_path,
                         hash=old_record.hash,  # Reuse existing hash
@@ -227,7 +221,7 @@ class Scanner:
                         files_added += 1
 
                         if files_added % 100 == 0:
-                            logger.info(f"{log_prefix}Added {files_added} new files...")
+                            logger.info(f"Added {files_added} new files...")
 
                     except (PermissionError, OSError) as e:
                         error_msg = f"Error hashing {current_path}: {e}"
@@ -235,20 +229,20 @@ class Scanner:
                         errors.append(error_msg)
 
         logger.info(
-            f"{log_prefix}Phase 2 complete: Added {files_added} files, "
+            f"Phase 2 complete: Added {files_added} files, "
             f"Modified {files_modified} files, Moved {files_moved} files"
         )
 
         # Phase 3: Detect deleted files
-        logger.info(f"{log_prefix}Phase 3: Detecting deleted files")
+        logger.info("Phase 3: Detecting deleted files")
 
         for db_path in db_files:
             if db_path not in current_files and db_path not in seen_db_paths:
-                logger.info(f"{log_prefix}Detected deletion: {db_path}")
+                logger.info(f"Detected deletion: {db_path}")
                 db.stage_file_removal(db_path)
                 files_removed += 1
 
-        logger.info(f"{log_prefix}Phase 3 complete: Removed {files_removed} files")
+        logger.info(f"Phase 3 complete: Removed {files_removed} files")
 
         result = SyncResult(
             files_scanned=files_scanned,
@@ -260,7 +254,7 @@ class Scanner:
         )
 
         logger.info(
-            f"{log_prefix}Sync complete - Scanned: {files_scanned}, "
+            f"Sync complete - Scanned: {files_scanned}, "
             f"Added: {files_added}, Modified: {files_modified}, Moved: {files_moved}, "
             f"Removed: {files_removed}, Errors: {len(errors)}"
         )
@@ -331,7 +325,7 @@ class Scanner:
         db.stage_file_update(abs_path=path, hash=file_hash, file_size=size, mtime=mtime)
 
     def scrub_files(
-        self, db: Database, percentage: float, frequency: str, drive_name: str = ""
+        self, db: Database, percentage: float, frequency: str
     ) -> ScrubResult:
         """Scrub files to detect bit rot (Phase 4).
 
@@ -339,15 +333,11 @@ class Scanner:
             db: Database instance
             percentage: Percentage of files to scrub (0.1 to 100.0)
             frequency: Scrub frequency (daily/weekly/monthly)
-            drive_name: Optional drive identifier for logging
 
         Returns:
             ScrubResult with validation statistics
         """
-        log_prefix = f"[{drive_name}] " if drive_name else ""
-        logger.info(
-            f"{log_prefix}Starting scrub operation ({percentage}%, {frequency} frequency)"
-        )
+        logger.info(f"Starting scrub operation ({percentage}%, {frequency} frequency)")
 
         # Determine minimum age based on frequency
         min_age_days = None
@@ -358,7 +348,7 @@ class Scanner:
 
         # Get files to scrub
         files_to_scrub = db.get_files_for_scrub(percentage, min_age_days)
-        logger.info(f"{log_prefix}Selected {len(files_to_scrub)} files for scrubbing")
+        logger.info(f"Selected {len(files_to_scrub)} files for scrubbing")
 
         files_validated = 0
         files_corrupted = []
@@ -385,7 +375,7 @@ class Scanner:
 
                     if files_validated % 100 == 0:
                         logger.info(
-                            f"{log_prefix}Validated {files_validated}/{len(files_to_scrub)} files..."
+                            f"Validated {files_validated}/{len(files_to_scrub)} files..."
                         )
                 else:
                     # Hash mismatch - BIT ROT DETECTED!
@@ -408,7 +398,7 @@ class Scanner:
         )
 
         logger.info(
-            f"{log_prefix}Scrub complete - Validated: {files_validated}, "
+            f"Scrub complete - Validated: {files_validated}, "
             f"Corrupted: {len(files_corrupted)}, Errors: {len(errors)}"
         )
 

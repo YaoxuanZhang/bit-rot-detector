@@ -312,7 +312,7 @@ def scenario_9_multi_drive():
         (test_dir2 / f"backup_{i}.txt").write_text(f"Drive 2 content {i}\n" * 100)
 
     print("Running initial sync on both drives...")
-    extra_env = {"TARGET_DIRECTORY": f"{test_dir1.absolute()}:{test_dir2.absolute()}"}
+    extra_env = {"TARGET_DIRECTORY": f"{test_dir1.absolute()},{test_dir2.absolute()}"}
 
     run_bitrot("--sync", test_dir=None, extra_env=extra_env, disable_notifications=True)
 
