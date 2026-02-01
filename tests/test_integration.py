@@ -266,11 +266,11 @@ def scenario_6_canary_failure():
 
 
 def main():
-    """Run all test scenarios."""
+    """Run selected test scenarios."""
     print("\n")
-    print("╔" + "═" * 78 + "╗")
-    print("║" + " " * 15 + "BIT ROT DETECTOR - END-TO-END EMAIL TESTS" + " " * 22 + "║")
-    print("╚" + "═" * 78 + "╝")
+    print("=" * 80)
+    print("         BIT ROT DETECTOR - END-TO-END EMAIL TESTS")
+    print("=" * 80)
     
     print("\nThis will create test data and send REAL emails to your configured address.")
     print("Make sure your .env file has valid SMTP credentials!")
@@ -281,32 +281,69 @@ def main():
         print("Please create .env with your SMTP credentials first.")
         return
     
-    response = input("\nReady to send test emails? (yes/no): ")
+    # Scenario menu
+    scenarios = {
+        "1": ("Test Email", scenario_1_test_email),
+        "2": ("New Files Detected", scenario_2_new_files),
+        "3": ("File Modifications", scenario_3_modifications),
+        "4": ("File Moves", scenario_3b_file_moves),
+        "5": ("File Removals", scenario_3c_file_removals),
+        "6": ("Successful Scrub", scenario_4_scrub_success),
+        "7": ("Bit Rot Detection", scenario_5_bit_rot),
+        "8": ("Canary Failure", scenario_6_canary_failure),
+    }
+    
+    print("\nAvailable test scenarios:")
+    print("-" * 80)
+    for key, (name, _) in scenarios.items():
+        print(f"  {key}. {name}")
+    print("  A. Run ALL scenarios")
+    print("  Q. Quit")
+    print("-" * 80)
+    
+    selection = input("\nSelect scenarios to run (comma-separated, e.g., 1,2,7 or A for all): ").strip()
+    
+    if selection.upper() == "Q":
+        print("Cancelled.")
+        return
+    
+    # Determine which scenarios to run
+    to_run = []
+    if selection.upper() == "A":
+        to_run = list(scenarios.values())
+    else:
+        selected = [s.strip() for s in selection.split(",")]
+        for s in selected:
+            if s in scenarios:
+                to_run.append(scenarios[s])
+            else:
+                print(f"Warning: Invalid selection '{s}' ignored")
+    
+    if not to_run:
+        print("No valid scenarios selected.")
+        return
+    
+    print(f"\nReady to run {len(to_run)} scenario(s)?")
+    response = input("Continue? (yes/no): ")
     if response.lower() != "yes":
         print("Cancelled.")
         return
     
     try:
-        scenario_1_test_email()
-        scenario_2_new_files()
-        scenario_3_modifications()
-        scenario_3b_file_moves()
-        scenario_3c_file_removals()
-        scenario_4_scrub_success()
-        scenario_5_bit_rot()
-        scenario_6_canary_failure()
+        for name, scenario_func in to_run:
+            scenario_func()
         
         print("\n" + "=" * 80)
-        print("All test scenarios completed!")
+        print(f"{len(to_run)} test scenario(s) completed!")
         print("=" * 80)
-        print("\nCheck your email inbox for all 8 notification types.")
+        print("\nCheck your email inbox for notifications.")
         
         # Cleanup
         print("\nCleaning up test directory...")
         shutil.rmtree("test_email_scenarios", ignore_errors=True)
         
     except KeyboardInterrupt:
-        print("\n\n Test interrupted by user.")
+        print("\n\nTest interrupted by user.")
         shutil.rmtree("test_email_scenarios", ignore_errors=True)
     except Exception as e:
         print(f"\n\nError during testing: {e}")

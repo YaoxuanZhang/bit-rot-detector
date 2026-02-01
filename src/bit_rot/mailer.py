@@ -387,9 +387,9 @@ Configuration:
             
             # Build body using existing section builder
             lines = []
-            lines.append("╔" + "═" * 62 + "╗")
-            lines.append("║" + " " * 16 + "BIT ROT DETECTOR - SYNC REPORT" + " " * 16 + "║")
-            lines.append("╚" + "═" * 62 + "╝")
+            lines.append("=" * 64)
+            lines.append("BIT ROT DETECTOR - SYNC REPORT")
+            lines.append("=" * 64)
             lines.append("")
             
             # Use existing builder function
@@ -494,9 +494,9 @@ Configuration:
             
             # Build body using existing section builder
             lines = []
-            lines.append("╔" + "═" * 62 + "╗")
-            lines.append("║" + " " * 15 + "BIT ROT DETECTOR - SCRUB REPORT" + " " * 16 + "║")
-            lines.append("╚" + "═" * 62 + "╝")
+            lines.append("=" * 64)
+            lines.append("BIT ROT DETECTOR - SCRUB REPORT")
+            lines.append("=" * 64)
             lines.append("")
             
             # Use existing builder function
