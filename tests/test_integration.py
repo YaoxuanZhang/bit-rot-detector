@@ -24,11 +24,26 @@ def setup_test_directory():
     return test_dir
 
 
-def run_bitrot(args: str, test_dir: Path, extra_env: dict = None):
+def run_bitrot(
+    args: str,
+    test_dir: Path = None,
+    extra_env: dict = None,
+    disable_notifications: bool = False,
+):
     """Run bit-rot-detector with given args."""
     env = os.environ.copy()
-    env["TARGET_DIRECTORY"] = str(test_dir.absolute())
+    if test_dir:
+        env["TARGET_DIRECTORY"] = str(test_dir.absolute())
     env["SCRUB_PERCENTAGE"] = "100"
+
+    if disable_notifications:
+        env["NOTIFY_SYNC_SUCCESS"] = "false"
+        env["NOTIFY_SCRUB_SUCCESS"] = "false"
+        env["NOTIFY_CRITICAL_FAILURES"] = "false"
+    else:
+        env["NOTIFY_SYNC_SUCCESS"] = "true"
+        env["NOTIFY_SCRUB_SUCCESS"] = "true"
+        env["NOTIFY_CRITICAL_FAILURES"] = "true"
 
     if extra_env:
         env.update(extra_env)
@@ -98,7 +113,7 @@ def scenario_3_modifications():
         (test_dir / f"file_{i}.txt").write_text(f"Original content {i}\n" * 50)
 
     print("Running initial sync...")
-    run_bitrot("--sync", test_dir)
+    run_bitrot("--sync", test_dir, disable_notifications=True)
 
     # Wait a bit to ensure mtime changes
     time.sleep(2)
@@ -130,7 +145,7 @@ def scenario_4_file_moves():
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
 
     print("Running initial sync to add files to database...")
-    run_bitrot("--sync", test_dir)
+    run_bitrot("--sync", test_dir, disable_notifications=True)
 
     # Create subdirectory and move files
     print("\nMoving 3 files to subdirectory...")
@@ -161,7 +176,7 @@ def scenario_5_file_removals():
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 50)
 
     print("Running initial sync...")
-    run_bitrot("--sync", test_dir)
+    run_bitrot("--sync", test_dir, disable_notifications=True)
 
     # Remove some files
     print("\nRemoving 4 files...")
@@ -189,7 +204,7 @@ def scenario_6_scrub_success():
         (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 100)
 
     print("Running initial sync...")
-    run_bitrot("--sync", test_dir)
+    run_bitrot("--sync", test_dir, disable_notifications=True)
 
     print("Running scrub operation...")
     run_bitrot("--scrub", test_dir)
@@ -213,7 +228,7 @@ def scenario_7_bit_rot():
         (test_dir / f"file_{i}.txt").write_text(f"Original content {i}\n" * 100)
 
     print("Running initial sync to hash files...")
-    run_bitrot("--sync", test_dir)
+    run_bitrot("--sync", test_dir, disable_notifications=True)
 
     # Corrupt files by modifying WITHOUT updating mtime
     print("\nSimulating bit rot (corrupting files without changing mtime)...")
@@ -301,21 +316,9 @@ def scenario_9_multi_drive():
         (test_dir2 / f"backup_{i}.txt").write_text(f"Drive 2 content {i}\n" * 100)
 
     print("Running initial sync on both drives...")
-    env = os.environ.copy()
-    env["TARGET_DIRECTORY"] = f"{test_dir1.absolute()}:{test_dir2.absolute()}"
-    env["SCRUB_PERCENTAGE"] = "100"
+    extra_env = {"TARGET_DIRECTORY": f"{test_dir1.absolute()}:{test_dir2.absolute()}"}
 
-    result = subprocess.run(
-        "uv run bit-rot-detector --sync",
-        shell=True,
-        cwd=Path.cwd(),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
-    if result.stderr:
-        print("STDERR:", result.stderr)
+    run_bitrot("--sync", test_dir=None, extra_env=extra_env, disable_notifications=True)
 
     # Modify some files on drive 1
     print("\nModifying 3 files on Drive 1...")
@@ -329,17 +332,7 @@ def scenario_9_multi_drive():
         (test_dir2 / f"backup_{i}.txt").unlink()
 
     print("Running sync + scrub on both drives...")
-    result = subprocess.run(
-        "uv run bit-rot-detector --sync --scrub",
-        shell=True,
-        cwd=Path.cwd(),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
-    if result.stderr:
-        print("STDERR:", result.stderr)
+    run_bitrot("--sync --scrub", test_dir=None, extra_env=extra_env)
 
     print("\nCheck your email:")
     print("  - Subject should show combined totals from both drives")
