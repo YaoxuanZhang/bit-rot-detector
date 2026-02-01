@@ -165,10 +165,9 @@ Configuration:
         if not sync_results:
             return lines
             
-        lines.append("=" * 64)
-        lines.append("SYNC RESULTS" + (" BY DRIVE" if include_drive_header and len(sync_results) > 1 else ""))
-        lines.append("=" * 64)
-        lines.append("")
+        # Build header
+        header_title = "SYNC RESULTS" + (" BY DRIVE" if include_drive_header and len(sync_results) > 1 else "")
+        lines.extend(Mailer._build_header(header_title))
         
         total_scanned = 0
         total_added = 0
@@ -230,10 +229,9 @@ Configuration:
         if not scrub_results:
             return lines
             
-        lines.append("=" * 64)
-        lines.append("SCRUB RESULTS" + (" BY DRIVE" if include_drive_header and len(scrub_results) > 1 else ""))
-        lines.append("=" * 64)
-        lines.append("")
+        # Build header
+        header_title = "SCRUB RESULTS" + (" BY DRIVE" if include_drive_header and len(scrub_results) > 1 else "")
+        lines.extend(Mailer._build_header(header_title))
         
         total_validated = 0
         total_corrupted = 0
@@ -304,7 +302,7 @@ Configuration:
         lines.extend(self._build_sync_section(sync_results, include_drive_header=True))
         lines.extend(self._build_scrub_section(scrub_results, include_drive_header=True))
         
-        lines.append("=" * 64)
+        lines.append(Mailer._build_separator())
         
         body = "\n".join(lines)
         
@@ -348,7 +346,7 @@ Configuration:
         Returns:
             Formatted summary report string
         """
-        lines = ["\n" + "=" * 60, "SUMMARY STATISTICS", "=" * 60]
+        lines = ["\n" + Mailer._build_separator(), "SUMMARY STATISTICS", Mailer._build_separator()]
 
         if sync_stats:
             lines.extend(
@@ -373,7 +371,7 @@ Configuration:
                 ]
             )
 
-        lines.append("=" * 60)
+        lines.append(Mailer._build_separator())
         return "\n".join(lines)
 
     def send_sync_notification(
@@ -419,15 +417,12 @@ Configuration:
             
             # Add error details if present
             if errors:
-                lines.append("=" * 64)
-                lines.append("ERROR DETAILS")
-                lines.append("=" * 64)
-                lines.append("")
+                lines.extend(Mailer._build_header("ERROR DETAILS"))
                 for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
                     lines.append(f"{i}. {error}")
                 lines.append("")
             
-            lines.append("=" * 64)
+            lines.append(Mailer._build_separator())
             body = "\n".join(lines)
 
             self.send_notification(subject, body)
@@ -459,10 +454,7 @@ Configuration:
             lines.append("")
             lines.append(f"IMMEDIATE ACTION REQUIRED: {len(files_corrupted)} file(s) corrupted!")
             lines.append("")
-            lines.append("=" * 64)
-            lines.append("CORRUPTED FILES (Full Paths)")
-            lines.append("=" * 64)
-            lines.append("")
+            lines.extend(Mailer._build_header("CORRUPTED FILES (Full Paths)"))
             
             # List all corrupted files with full paths
             for i, filepath in enumerate(files_corrupted, 1):
@@ -498,7 +490,7 @@ Configuration:
             lines.append("3. Check system logs for hardware errors")
             lines.append("4. Consider running a full disk check (e.g., fsck, chkdsk)")
             lines.append("")
-            lines.append("=" * 64)
+            lines.append(Mailer._build_separator())
             
             body = "\n".join(lines)
             self.send_notification(subject, body)
@@ -522,15 +514,12 @@ Configuration:
             
             # Add error details if present
             if errors:
-                lines.append("=" * 64)
-                lines.append("ERROR DETAILS")
-                lines.append("=" * 64)
-                lines.append("")
+                lines.extend(Mailer._build_header("ERROR DETAILS"))
                 for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
                     lines.append(f"{i}. {error}")
                 lines.append("")
             
-            lines.append("=" * 64)
+            lines.append(Mailer._build_separator())
             body = "\n".join(lines)
 
             self.send_notification(subject, body)
