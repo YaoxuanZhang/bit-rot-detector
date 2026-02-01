@@ -134,7 +134,7 @@ class Scanner:
         for root, dirs, files in os.walk(root_path, followlinks=False):
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Scanning interrupted")
-                break
+                raise KeyboardInterrupt()
 
             # Skip system folders (modify dirs in-place to prevent descending)
             dirs[:] = [d for d in dirs if d not in system_folders]
@@ -145,7 +145,8 @@ class Scanner:
 
             for filename in files:
                 if self.stop_event and self.stop_event.is_set():
-                    break
+                    logger.info("Scanning interrupted (File walk)")
+                    raise KeyboardInterrupt()
                 filepath = Path(root) / filename
                 try:
                     stat = filepath.stat()
@@ -174,7 +175,7 @@ class Scanner:
         for current_path, (size, mtime) in current_files.items():
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Scanning interrupted (Phase 2)")
-                break
+                raise KeyboardInterrupt()
 
             if current_path in db_files:
                 # File exists in same location - check if modified
@@ -270,7 +271,8 @@ class Scanner:
 
         for db_path in db_files:
             if self.stop_event and self.stop_event.is_set():
-                break
+                logger.info("Scanning interrupted (Phase 3)")
+                raise KeyboardInterrupt()
             if db_path not in current_files and db_path not in seen_db_paths:
                 logger.info(f"Detected deletion: {db_path}")
                 db.stage_file_removal(db_path)
@@ -324,7 +326,8 @@ class Scanner:
         """
         for db_path, record in db_files.items():
             if self.stop_event and self.stop_event.is_set():
-                break
+                logger.debug("Scanning interrupted (Move detection)")
+                raise KeyboardInterrupt()
 
             if db_path in seen_paths:
                 continue
@@ -394,7 +397,7 @@ class Scanner:
         for i, record in enumerate(files_to_scrub, 1):
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Scrubbing interrupted")
-                break
+                raise KeyboardInterrupt()
 
             try:
                 filepath = Path(record.abs_path)
