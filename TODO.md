@@ -1,0 +1,1 @@
+Fix keyboard interrupt handling on Windows
