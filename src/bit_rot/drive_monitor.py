@@ -168,8 +168,8 @@ def format_drive_health(health: DriveHealth) -> str:
     # Format SMART status
     status_info = health.smart_status
 
-    # Pad drive name for alignment (20 chars)
-    drive_label = f"{health.drive_name}:".ljust(20)
+    # Drive name
+    drive_label = f"{health.drive_name}:"
 
     return (
         f"{drive_label} {usage_info:>35} | Temp: {temp_info:>5} | Health: {status_info}"
