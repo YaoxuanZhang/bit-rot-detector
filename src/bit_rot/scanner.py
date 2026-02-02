@@ -193,9 +193,6 @@ class Scanner:
                     errors.append(error_msg)
 
         logger.info(f"Phase 1 complete: Scanned {files_scanned} files")
-        logger.info(
-            f"Processing {len(current_files)}/{files_scanned} files (Phase 2-3)"
-        )
 
         # Phase 2: Process files and detect moves
         logger.info("Phase 2: Processing files and detecting moves")
