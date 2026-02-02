@@ -281,6 +281,7 @@ class Scanner:
                         self._add_new_file(current_path, file_hash, size, mtime, db)
                         files_added += 1
 
+                        #! May need to verify this- it's meant to be progress of how many new files to add...
                         if files_added % 1000 == 0:
                             # Calculate total new files to add
                             total_new = len(current_files) - len(db_files)
