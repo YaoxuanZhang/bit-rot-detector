@@ -61,7 +61,8 @@ class Database:
 
     def _create_schema(self) -> None:
         """Create database schema if it doesn't exist."""
-        self.conn.execute("""
+        self.conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS files (
                 abs_path TEXT PRIMARY KEY,
                 hash TEXT NOT NULL,
@@ -72,7 +73,8 @@ class Database:
                 file_size INTEGER NOT NULL,
                 mtime REAL NOT NULL
             )
-            """)
+            """
+        )
         self.conn.commit()
         logger.info("Database schema initialized successfully")
 
@@ -287,3 +289,32 @@ class Database:
         if self.conn:
             self.conn.close()
             logger.debug("Database connection closed")
+
+    def compute_checksum(self) -> str:
+        """Compute BLAKE3 checksum of the database file.
+
+        Returns:
+            BLAKE3 hash (hexadecimal string) of the database file
+        """
+        if not self.db_path.exists():
+            logger.error(f"Database file not found: {self.db_path}")
+            return ""
+
+        try:
+            import blake3
+
+            # Use BLAKE3 for consistency with file hashing in hasher module
+            hasher = blake3.blake3()
+
+            with open(self.db_path, "rb") as f:
+                # Read in chunks to handle large files efficiently
+                while chunk := f.read(8192):
+                    hasher.update(chunk)
+
+            checksum = hasher.hexdigest()
+            logger.debug(f"Computed database checksum: {checksum[:16]}...")
+            return checksum
+
+        except (OSError, IOError) as e:
+            logger.error(f"Error computing database checksum: {e}")
+            return ""

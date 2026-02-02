@@ -50,8 +50,9 @@ def process_drive(
     scrub_result = None
 
     try:
-        # Canary check
-        if not scanner.check_canary(target_path):
+        # Canary check - returns (exists, db_checksum)
+        canary_exists, stored_checksum = scanner.check_canary(target_path)
+        if not canary_exists:
             error_msg = (
                 f"Canary check failed: .bitrot-canary not found in {target_path}"
             )
@@ -61,6 +62,22 @@ def process_drive(
         # Initialize database
         db_path = target_path / "bitrot.db"
         db = Database(db_path)
+
+        # Verify database checksum if we have one stored
+        if stored_checksum and db_path.exists():
+            current_checksum = db.compute_checksum()
+            if current_checksum and current_checksum != stored_checksum:
+                error_msg = (
+                    f"Database checksum mismatch! Database may be corrupted.\n"
+                    f"  Expected: {stored_checksum[:32]}...\n"
+                    f"  Got:      {current_checksum[:32]}..."
+                )
+                logger.critical(error_msg)
+                return (drive_name, drive_health, None, None, error_msg)
+            elif current_checksum:
+                logger.info("Database checksum verified successfully")
+        elif db_path.exists():
+            logger.info("No stored checksum found, will create one after operations")
 
         # Sync operation
         if run_sync_op:
@@ -83,6 +100,13 @@ def process_drive(
             )
 
         logger.info("Processing completed successfully")
+
+        # Update canary with new database checksum
+        new_checksum = db.compute_checksum()
+        if new_checksum:
+            scanner.create_or_update_canary(target_path, new_checksum)
+            logger.info("Updated canary with database checksum")
+
         return (drive_name, drive_health, sync_result, scrub_result, None)
 
     except Exception as e:

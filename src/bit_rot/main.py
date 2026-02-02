@@ -60,6 +60,11 @@ def main() -> int:
         # Load configuration
         config = load_config()
 
+        # Reconfigure logging with config settings
+        setup_logging(
+            log_retention_days=config.log_retention_days, log_level=config.log_level
+        )
+
         logger.info("Loading configuration from environment")
         logger.info(
             f"Target directories: {', '.join(str(p) for p in config.target_paths)}"

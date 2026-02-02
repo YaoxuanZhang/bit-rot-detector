@@ -5,7 +5,8 @@ A utility for detecting file corruption (bit rot) using BLAKE3 hashing with inte
 ## Features
 
 - **BLAKE3 Hashing**: Fast, cryptographically secure file integrity verification
-- **Multi-Drive Support**: Concurrent processing of multiple drives with configurable worker threads
+- **Database Integrity**: BLAKE3 checksum validation via canary file prevents corrupted database usage
+- **Multi-Drive Support**: Concurrent processing of multiple drives with configurable worker threads  
 - **Atomic Transactions**: All database updates happen atomically at the end of successful runs
 - **Intelligent Move Detection**: Detects relocated files by matching size/mtime/hash, preserving scrub history
 - **Unified Reporting**: Single email report gathering stats, errors, and health metrics from all drives
@@ -13,7 +14,7 @@ A utility for detecting file corruption (bit rot) using BLAKE3 hashing with inte
 - **Configurable Scrubbing**: Verify a configurable percentage of files at daily/weekly/monthly intervals
 - **SMTP2GO Notifications**: Email alerts for new files, successful scrubs, and critical failures
 - **Canary Protection**: Prevents mass-deletion logic on unmounted drives
-- **Comprehensive Logging**: Structured logging to both console and file
+- **Comprehensive Logging**: Configurable log levels with dual console/file output and automatic rotation
 
 ## Installation
 
@@ -92,8 +93,9 @@ NOTIFY_ON_SUCCESS=true         # Send email on success (failures always sent)
 SCRUB_PERCENTAGE=1.0          # 0.1 to 100.0
 SCRUB_FREQUENCY=daily         # daily, weekly, or monthly
 
-# Log retention
+# Logging
 LOG_RETENTION_DAYS=7          # Days to keep log files
+LOG_LEVEL=INFO                # DEBUG, INFO, WARNING, ERROR, or CRITICAL
 ```
 
 3. Create the canary file in your target directory:
@@ -142,12 +144,14 @@ uv run bit-rot-detector
 
 ### The "Sync & Scrub" Pattern
 
-1. **Canary Check**: Verifies `.bitrot-canary` exists on each drive before any operations
-2. **Phase 1 - Sync**: Walks directory tree, records file metadata (size, mtime, hash)
-3. **Phase 2 - Modification Detection**: Compares size/mtime with database, re-hashes only changed files
-4. **Phase 3 - Move Detection**: Identifies relocated files by matching size/mtime, then verifying hash
-5. **Phase 4 - Deletion Detection**: Removes database entries for files not seen in current session
-6. **Phase 5 - Scrubbing**: Re-verifies a configurable percentage of files (oldest first) to detect bit rot
+1. **Canary Check**: Verifies `.bitrot-canary` exists and reads stored database checksum
+2. **Database Validation**: Compares BLAKE3 checksum of database with stored value (aborts if mismatch)
+3. **Phase 1 - Sync**: Walks directory tree, records file metadata (size, mtime, hash)
+4. **Phase 2 - Modification Detection**: Compares size/mtime with database, re-hashes only changed files
+5. **Phase 3 - Move Detection**: Identifies relocated files by matching size/mtime, then verifying hash
+6. **Phase 4 - Deletion Detection**: Removes database entries for files not seen in current session
+7. **Phase 5 - Scrubbing**: Re-verifies a configurable percentage of files (oldest first) to detect bit rot
+8. **Checksum Update**: Updates canary file with new database checksum after successful operations
 
 ### Multi-Drive Processing
 
@@ -198,13 +202,14 @@ Or use a more specific schedule:
 ## Logging
 
 All operations are logged with rotation and automatic cleanup:
-- **Console**: INFO level and above
+- **Console**: Configurable log level via `LOG_LEVEL` (default: INFO)
+  - Supported levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
 - **Log Files**: DEBUG level and above, stored in `logs/` directory
   - Format: `bitrot_YYYYMMDD_HHMMSS.log` (timestamped per run)
   - Retention: Configurable via `LOG_RETENTION_DAYS` (default: 7 days)
   - Old logs are automatically deleted on each run
 
-Log format: `[TIMESTAMP] [LEVEL] [MODULE] - Message`
+Log format: `[TIMESTAMP] [LEVEL] [MODULE][DRIVE] - Message`
 
 Example log files:
 ```

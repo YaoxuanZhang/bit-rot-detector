@@ -17,6 +17,7 @@ class Config:
     scrub_frequency: str
     log_retention_days: int
     max_workers: int
+    log_level: str
 
 
 def load_config() -> Config:
@@ -89,6 +90,14 @@ def load_config() -> Config:
     if max_workers < 1:
         raise ValueError(f"MAX_WORKERS must be at least 1, got {max_workers}")
 
+    # Log level configuration
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    if log_level not in valid_log_levels:
+        raise ValueError(
+            f"LOG_LEVEL must be one of {', '.join(valid_log_levels)}, got {log_level}"
+        )
+
     return Config(
         target_paths=target_paths,
         email_config=email_config,
@@ -96,4 +105,5 @@ def load_config() -> Config:
         scrub_frequency=scrub_frequency,
         log_retention_days=log_retention_days,
         max_workers=max_workers,
+        log_level=log_level,
     )

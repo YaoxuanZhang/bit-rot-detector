@@ -441,6 +441,110 @@ def scenario_11_drive_rename():
     input("\nPress Enter to finish...")
 
 
+def scenario_12_db_checksum_validation():
+    """Scenario 12: Database checksum validation."""
+    print("\n" + "=" * 80)
+    print("SCENARIO 12: Database Checksum Validation")
+    print("=" * 80)
+
+    test_dir = setup_test_directory()
+
+    # Create files
+    print("\nCreating files...")
+    for i in range(5):
+        (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 100)
+
+    print("Running initial sync...")
+    run_bitrot("--sync", test_dir, disable_notifications=True)
+
+    # Verify canary has checksum
+    canary_path = test_dir / ".bitrot-canary"
+    if canary_path.exists():
+        checksum = canary_path.read_text().strip()
+        print(f"\n✓ Canary file contains database checksum: {checksum[:32]}...")
+    else:
+        print("\n✗ ERROR: Canary file not found!")
+
+    # Run again to verify checksum is validated
+    print("\nRunning sync again (should verify checksum)...")
+    run_bitrot("--sync", test_dir)
+
+    print("\n✓ Check logs to verify 'Database checksum verified successfully' message")
+    input("\nPress Enter to continue to next scenario...")
+
+
+def scenario_13_db_corruption_detection():
+    """Scenario 13: Detect corrupted database via checksum."""
+    print("\n" + "=" * 80)
+    print("SCENARIO 13: Database Corruption Detection")
+    print("=" * 80)
+
+    test_dir = setup_test_directory()
+
+    # Create files
+    print("\nCreating files...")
+    for i in range(5):
+        (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 100)
+
+    print("Running initial sync...")
+    run_bitrot("--sync", test_dir, disable_notifications=True)
+
+    # Corrupt the database by appending junk data
+    print("\nCorrupting database file...")
+    db_path = test_dir / "bitrot.db"
+    with open(db_path, "ab") as f:
+        f.write(b"CORRUPTED DATA!!!" * 100)
+
+    # Try running again - should detect corruption
+    print("Running sync again (should detect database corruption)...")
+    run_bitrot("--sync", test_dir)
+
+    print("\nCheck your email for: 'Bit Rot Detector - Critical Error'")
+    print("   (Should mention database checksum mismatch)")
+    input("\nPress Enter to continue to next scenario...")
+
+
+def scenario_14_log_level_configuration():
+    """Scenario 14: Test log level configuration."""
+    print("\n" + "=" * 80)
+    print("SCENARIO 14: Log Level Configuration")
+    print("=" * 80)
+
+    test_dir = setup_test_directory()
+
+    # Create files
+    print("\nCreating files...")
+    for i in range(3):
+        (test_dir / f"file_{i}.txt").write_text(f"Content {i}\n" * 100)
+
+    # Test with DEBUG level
+    print("\n--- Testing with LOG_LEVEL=DEBUG ---")
+    print("(Should see more detailed output)")
+    run_bitrot(
+        "--sync", test_dir, extra_env={"LOG_LEVEL": "DEBUG"}, disable_notifications=True
+    )
+
+    # Test with WARNING level
+    print("\n--- Testing with LOG_LEVEL=WARNING ---")
+    print("(Should see minimal output)")
+    run_bitrot(
+        "--sync",
+        test_dir,
+        extra_env={"LOG_LEVEL": "WARNING"},
+        disable_notifications=True,
+    )
+
+    # Test with default (INFO) level
+    print("\n--- Testing with LOG_LEVEL=INFO (default) ---")
+    print("(Should see normal output)")
+    run_bitrot("--sync", test_dir, disable_notifications=True)
+
+    print(
+        "\n✓ Compare the output above - DEBUG should be most verbose, WARNING least verbose"
+    )
+    input("\nPress Enter to finish...")
+
+
 def main():
     """Run selected test scenarios."""
     print("\n")
@@ -472,6 +576,9 @@ def main():
         "9": ("Multi-Drive Sync+Scrub", scenario_9_multi_drive),
         "10": ("Cross-Drive File Moves", scenario_10_drive_path_change),
         "11": ("Drive Rename Detection", scenario_11_drive_rename),
+        "12": ("DB Checksum Validation", scenario_12_db_checksum_validation),
+        "13": ("DB Corruption Detection", scenario_13_db_corruption_detection),
+        "14": ("Log Level Configuration", scenario_14_log_level_configuration),
     }
 
     print("\nAvailable test scenarios:")

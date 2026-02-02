@@ -49,24 +49,52 @@ class Scanner:
         self.stop_event = stop_event
 
     @staticmethod
-    def check_canary(root_path: Path) -> bool:
-        """Verify that the canary file exists.
+    def check_canary(root_path: Path) -> tuple[bool, Optional[str]]:
+        """Verify that the canary file exists and read database checksum.
 
         Args:
             root_path: Root directory to check
 
         Returns:
-            True if canary exists, False otherwise
+            Tuple of (canary_exists, db_checksum)
+            db_checksum is None if canary doesn't exist or has no checksum
         """
         canary_path = root_path / ".bitrot-canary"
         exists = canary_path.exists()
 
-        if exists:
-            logger.info(f"Canary check passed: {canary_path}")
-        else:
+        if not exists:
             logger.critical(f"Canary check FAILED: {canary_path} not found")
+            return (False, None)
 
-        return exists
+        logger.info(f"Canary check passed: {canary_path}")
+
+        # Try to read database checksum from canary
+        try:
+            content = canary_path.read_text().strip()
+            if content:
+                logger.debug(f"Read database checksum from canary: {content[:16]}...")
+                return (True, content)
+        except (OSError, IOError) as e:
+            logger.warning(f"Could not read checksum from canary: {e}")
+
+        return (True, None)
+
+    @staticmethod
+    def create_or_update_canary(root_path: Path, db_checksum: str) -> None:
+        """Create or update the canary file with database checksum.
+
+        Args:
+            root_path: Root directory
+            db_checksum: Database checksum to store
+        """
+        canary_path = root_path / ".bitrot-canary"
+        try:
+            canary_path.write_text(db_checksum)
+            logger.debug(
+                f"Updated canary with database checksum: {db_checksum[:16]}..."
+            )
+        except (OSError, IOError) as e:
+            logger.error(f"Failed to write canary file: {e}")
 
     @staticmethod
     def _ensure_long_path(path: Path) -> Path:
@@ -165,6 +193,9 @@ class Scanner:
                     errors.append(error_msg)
 
         logger.info(f"Phase 1 complete: Scanned {files_scanned} files")
+        logger.info(
+            f"Processing {len(current_files)}/{files_scanned} files (Phase 2-3)"
+        )
 
         # Phase 2: Process files and detect moves
         logger.info("Phase 2: Processing files and detecting moves")
@@ -253,8 +284,10 @@ class Scanner:
                         self._add_new_file(current_path, file_hash, size, mtime, db)
                         files_added += 1
 
-                        if files_added % 100 == 0:
-                            logger.info(f"Added {files_added} new files...")
+                        if files_added % 1000 == 0:
+                            # Calculate total new files to add
+                            total_new = len(current_files) - len(db_files)
+                            logger.info(f"Added {files_added}/{total_new} new files...")
 
                     except (PermissionError, OSError) as e:
                         error_msg = f"Error hashing {current_path}: {e}"

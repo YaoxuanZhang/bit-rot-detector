@@ -22,11 +22,12 @@ class DirectoryContextFilter(logging.Filter):
         return True
 
 
-def setup_logging(log_retention_days: int = 7) -> None:
+def setup_logging(log_retention_days: int = 7, log_level: str = "INFO") -> None:
     """Configure logging with refined format, dual output, and rotation.
 
     Args:
         log_retention_days: Number of days to keep log files
+        log_level: Console log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     """
     # Create logs directory
     logs_dir = Path("logs")
@@ -62,9 +63,9 @@ def setup_logging(log_retention_days: int = 7) -> None:
     # Create context filter
     context_filter = DirectoryContextFilter()
 
-    # Console handler (INFO and above)
+    # Console handler - use configurable log level
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(getattr(logging, log_level))
     console_formatter = logging.Formatter(log_format, date_format)
     console_handler.setFormatter(console_formatter)
     console_handler.addFilter(context_filter)
@@ -79,6 +80,7 @@ def setup_logging(log_retention_days: int = 7) -> None:
     root_logger.addHandler(file_handler)
 
     logging.info(f"Logging to: {log_file}")
+    logging.info(f"Console log level: {log_level}")
 
 
 def cleanup_old_logs(logs_dir: Path, retention_days: int) -> None:
