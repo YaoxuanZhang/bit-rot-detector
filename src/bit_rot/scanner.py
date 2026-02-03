@@ -282,6 +282,7 @@ class Scanner:
                         files_added += 1
 
                         #! May need to verify this- it's meant to be progress of how many new files to add...
+                        #! This number could be negative if files were deleted...
                         if files_added % 1000 == 0:
                             # Calculate total new files to add
                             total_new = len(current_files) - len(db_files)
