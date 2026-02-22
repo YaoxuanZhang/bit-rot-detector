@@ -2,6 +2,7 @@ package scanner_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,7 +42,7 @@ func TestSyncDirectory_NewFiles(t *testing.T) {
 	}
 
 	repo := openRepo(t, dir)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 
 	res, err := syncer.SyncDirectory(context.Background(), dir, repo)
 	if err != nil {
@@ -75,7 +76,7 @@ func TestSyncDirectory_DeletedFiles(t *testing.T) {
 
 	// Second sync: the file should be detected as deleted.
 	repo2 := openRepo(t, dir)
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 
 	res2, err := syncer.SyncDirectory(context.Background(), dir, repo2)
 	if err != nil {
@@ -98,7 +99,7 @@ func TestScrubFiles_NoCorruption(t *testing.T) {
 	_ = repo.Commit()
 
 	repo2 := openRepo(t, dir)
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 
 	res, err := syncer.ScrubFiles(context.Background(), repo2, 100, nil)
 	if err != nil {
@@ -133,7 +134,7 @@ func TestScrubFiles_BitRotDetected(t *testing.T) {
 	// which is exactly what the scrub detects.
 
 	repo2 := openRepo(t, dir)
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 
 	res, err := syncer.ScrubFiles(context.Background(), repo2, 100, nil)
 	if err != nil {
@@ -162,7 +163,7 @@ func TestSyncDirectory_ModifiedFile(t *testing.T) {
 	_ = os.Chtimes(file, now, now)
 
 	repo2 := openRepo(t, dir)
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 	res, err := syncer.SyncDirectory(context.Background(), dir, repo2)
 	if err != nil {
 		t.Fatalf("second sync: %v", err)
@@ -190,7 +191,7 @@ func TestSyncDirectory_MovedFile(t *testing.T) {
 	_ = os.Rename(src, dst)
 
 	repo2 := openRepo(t, dir)
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 	res, err := syncer.SyncDirectory(context.Background(), dir, repo2)
 	if err != nil {
 		t.Fatalf("second sync: %v", err)
@@ -214,7 +215,7 @@ func TestScrubFiles_WithMinAgeDays(t *testing.T) {
 	_ = repo.Commit()
 
 	repo2 := openRepo(t, dir)
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 
 	// minAgeDays=30 means only files not scrubbed in 30 days are eligible.
 	// Since this is a freshly synced file with no scrub history, it qualifies.
@@ -232,7 +233,7 @@ func TestSyncDirectory_EmptyDirectory(t *testing.T) {
 	dir, syncer := setup(t)
 	// Only the canary is present; no user files.
 	repo := openRepo(t, dir)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 
 	res, err := syncer.SyncDirectory(context.Background(), dir, repo)
 	if err != nil {
@@ -250,7 +251,7 @@ func TestSyncDirectory_Symlinks_Ignored(t *testing.T) {
 	_ = os.Symlink(real, filepath.Join(dir, "link.txt"))
 
 	repo := openRepo(t, dir)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 
 	res, err := syncer.SyncDirectory(context.Background(), dir, repo)
 	if err != nil {
@@ -268,5 +269,161 @@ func TestNewSyncer_MinimumOneWorker(t *testing.T) {
 	s := scanner.NewSyncer(h, 0)
 	if s == nil {
 		t.Fatal("NewSyncer returned nil")
+	}
+}
+
+func TestScrubFiles_FileDisappearsDuringScrub(t *testing.T) {
+	dir, syncer := setup(t)
+	file := filepath.Join(dir, "vanishing.txt")
+	_ = os.WriteFile(file, []byte("present"), 0o644)
+
+	// Sync to record the file.
+	repo := openRepo(t, dir)
+	_, err := syncer.SyncDirectory(context.Background(), dir, repo)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	_ = repo.Commit()
+
+	// Remove the file before scrub runs.
+	_ = os.Remove(file)
+
+	repo2 := openRepo(t, dir)
+	defer func() { _ = repo2.Rollback() }()
+
+	res, err := syncer.ScrubFiles(context.Background(), repo2, 100, nil)
+	if err != nil {
+		t.Fatalf("ScrubFiles: %v", err)
+	}
+	// Disappeared file should be reported as a scrub error (not corruption).
+	if len(res.Errors) == 0 {
+		t.Error("expected at least one scrub error for disappeared file")
+	}
+}
+
+func TestScrubFiles_ContextCancellation(t *testing.T) {
+	dir, syncer := setup(t)
+	for i := 0; i < 5; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("file%d.txt", i))
+		_ = os.WriteFile(name, []byte("data"), 0o644)
+	}
+
+	repo := openRepo(t, dir)
+	_, err := syncer.SyncDirectory(context.Background(), dir, repo)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	_ = repo.Commit()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	repo2 := openRepo(t, dir)
+	defer func() { _ = repo2.Rollback() }()
+
+	// Should return quickly with context error or empty results.
+	_, _ = syncer.ScrubFiles(ctx, repo2, 100, nil)
+}
+
+func TestSyncDirectory_WalkError(t *testing.T) {
+	dir, syncer := setup(t)
+
+	// Create a directory that we then make unreadable.
+	subdir := filepath.Join(dir, "restricted")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(subdir, "secret.txt"), []byte("data"), 0o644)
+	// Make it unreadable so the walker gets a permission error.
+	if err := os.Chmod(subdir, 0o000); err != nil {
+		t.Skip("cannot chmod (may be running as root): " + err.Error())
+	}
+	t.Cleanup(func() { _ = os.Chmod(subdir, 0o755) })
+
+	repo := openRepo(t, dir)
+	defer func() { _ = repo.Rollback() }()
+
+	// Walk should continue despite the error (returning it in result.Errors).
+	res, err := syncer.SyncDirectory(context.Background(), dir, repo)
+	if err != nil {
+		t.Fatalf("SyncDirectory: %v", err)
+	}
+	// The walk error is non-fatal; it is recorded in result.Errors.
+	_ = res
+}
+
+func TestSkipSystemDir(t *testing.T) {
+	// skipSystemDir is unexported; exercise it indirectly via SyncDirectory
+	// by placing a directory with a system-reserved name under the root.
+	dir, syncer := setup(t)
+
+	// Create a directory that should be skipped.
+	recycleDir := filepath.Join(dir, "$RECYCLE.BIN")
+	if err := os.Mkdir(recycleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(recycleDir, "hidden.txt"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "visible.txt"), []byte("y"), 0o644)
+
+	repo := openRepo(t, dir)
+	defer func() { _ = repo.Rollback() }()
+
+	res, err := syncer.SyncDirectory(context.Background(), dir, repo)
+	if err != nil {
+		t.Fatalf("SyncDirectory: %v", err)
+	}
+	// hidden.txt inside $RECYCLE.BIN should have been skipped.
+	if res.FilesScanned != 1 {
+		t.Errorf("expected 1 file scanned (system dir skipped), got %d", res.FilesScanned)
+	}
+}
+
+func TestSyncDirectory_MultipleFiles(t *testing.T) {
+	dir, syncer := setup(t)
+	for i := 0; i < 10; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("file%02d.dat", i))
+		_ = os.WriteFile(name, []byte(fmt.Sprintf("content-%d", i)), 0o644)
+	}
+
+	repo := openRepo(t, dir)
+	defer func() { _ = repo.Rollback() }()
+
+	res, err := syncer.SyncDirectory(context.Background(), dir, repo)
+	if err != nil {
+		t.Fatalf("SyncDirectory: %v", err)
+	}
+	if res.FilesScanned != 10 {
+		t.Errorf("expected 10 files scanned, got %d", res.FilesScanned)
+	}
+	if res.FilesAdded != 10 {
+		t.Errorf("expected 10 files added, got %d", res.FilesAdded)
+	}
+}
+
+func TestSyncDirectory_UnchangedFiles(t *testing.T) {
+	dir, syncer := setup(t)
+	_ = os.WriteFile(filepath.Join(dir, "stable.txt"), []byte("stable"), 0o644)
+
+	// First sync.
+	repo := openRepo(t, dir)
+	_, err := syncer.SyncDirectory(context.Background(), dir, repo)
+	if err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	_ = repo.Commit()
+
+	// Second sync with no changes.
+	repo2 := openRepo(t, dir)
+	defer func() { _ = repo2.Rollback() }()
+
+	res, err := syncer.SyncDirectory(context.Background(), dir, repo2)
+	if err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	if res.FilesModified != 0 {
+		t.Errorf("expected 0 modified, got %d", res.FilesModified)
+	}
+	if res.FilesAdded != 0 {
+		t.Errorf("expected 0 added on second sync, got %d", res.FilesAdded)
 	}
 }

@@ -108,7 +108,9 @@ func TestRun_SyncThenScrub(t *testing.T) {
 
 func TestRun_MissingCanary(t *testing.T) {
 	dir := t.TempDir() // No canary file.
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	results, _ := coordinator.Run(context.Background(), []string{dir}, coordinator.Options{
 		RunSync:    true,
@@ -269,4 +271,96 @@ func containsStringHelper(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestRun_DBChecksumMismatch(t *testing.T) {
+	dir := setupDrive(t)
+
+	// First run: sync and commit, which writes a valid checksum into the canary.
+	results, _ := coordinator.Run(context.Background(), []string{dir}, coordinator.Options{
+		RunSync:         true,
+		ScrubPercentage: 100,
+		ScrubFrequency:  "daily",
+		MaxWorkers:      2,
+	})
+	if results[0].Err != nil {
+		t.Fatalf("first run: %v", results[0].Err)
+	}
+
+	// Corrupt the canary checksum so the next run sees a mismatch.
+	canaryPath := filepath.Join(dir, ".bitrot-canary")
+	if err := os.WriteFile(canaryPath, []byte("deadbeef_invalid_checksum"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run: should fail due to DB checksum mismatch.
+	results2, _ := coordinator.Run(context.Background(), []string{dir}, coordinator.Options{
+		RunSync:    true,
+		MaxWorkers: 1,
+	})
+	if results2[0].Err == nil {
+		t.Error("expected error due to DB checksum mismatch")
+	}
+}
+
+func TestRun_ScrubOnly_NoSyncFirst(t *testing.T) {
+	dir := setupDrive(t)
+
+	// Scrub with no prior sync = no files in DB = 0 validated, no error.
+	results, _ := coordinator.Run(context.Background(), []string{dir}, coordinator.Options{
+		RunScrub:        true,
+		ScrubPercentage: 100,
+		ScrubFrequency:  "daily",
+		MaxWorkers:      2,
+	})
+	if results[0].Err != nil {
+		t.Fatalf("scrub-only with no prior sync: %v", results[0].Err)
+	}
+	if results[0].ScrubResult == nil {
+		t.Fatal("expected ScrubResult")
+	}
+	if results[0].ScrubResult.FilesValidated != 0 {
+		t.Errorf("expected 0 files validated (empty DB), got %d", results[0].ScrubResult.FilesValidated)
+	}
+}
+
+func TestRun_NeitherSyncNorScrub(t *testing.T) {
+	dir := setupDrive(t)
+
+	// Running with neither RunSync nor RunScrub should still succeed (canary+commit).
+	results, _ := coordinator.Run(context.Background(), []string{dir}, coordinator.Options{
+		RunSync:    false,
+		RunScrub:   false,
+		MaxWorkers: 1,
+	})
+	if results[0].Err != nil {
+		t.Errorf("expected success, got: %v", results[0].Err)
+	}
+}
+
+func TestRun_MaxWorkersCapsPerDrive(t *testing.T) {
+	dir := setupDrive(t)
+
+	// MaxWorkers=1 should still work without panicking.
+	results, _ := coordinator.Run(context.Background(), []string{dir}, coordinator.Options{
+		RunSync:         true,
+		ScrubPercentage: 100,
+		ScrubFrequency:  "daily",
+		MaxWorkers:      1,
+	})
+	if results[0].Err != nil {
+		t.Errorf("MaxWorkers=1 failed: %v", results[0].Err)
+	}
+}
+
+func TestCollectErrors_Multiple(t *testing.T) {
+	results := []coordinator.DriveResult{
+		{Drive: "a", Err: context.Canceled},
+		{Drive: "b", Err: context.DeadlineExceeded},
+		{Drive: "c", Err: nil},
+	}
+	errs := coordinator.CollectErrors(results)
+	if len(errs) != 2 {
+		t.Fatalf("expected 2 errors, got %d", len(errs))
+	}
 }

@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -136,7 +135,7 @@ func setupLogging(level string) {
 			if a.Key == slog.LevelKey {
 				a.Key = "level"
 				lv := a.Value.Any().(slog.Level)
-				a.Value = slog.StringValue(fmt.Sprintf("%s", lv))
+				a.Value = slog.StringValue(lv.String())
 			}
 			return a
 		},

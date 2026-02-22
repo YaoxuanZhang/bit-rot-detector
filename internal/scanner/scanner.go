@@ -206,7 +206,11 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 			rec.ScrubCount = existing.ScrubCount
 		} else {
 			// Check for a moved file (same size+mtime at a different path).
-			if movedFrom := findMovedFile(res.Path, res.Size, res.Mtime, dbFiles, seenFiles); movedFrom != "" {
+			// Protect seenFiles with the mutex since the walker goroutine writes to it concurrently.
+			seenMu.Lock()
+			movedFrom := findMovedFile(res.Path, res.Size, res.Mtime, dbFiles, seenFiles)
+			seenMu.Unlock()
+			if movedFrom != "" {
 				old := dbFiles[movedFrom]
 				rec.AddedAt = old.AddedAt
 				rec.LastScrubbed = old.LastScrubbed

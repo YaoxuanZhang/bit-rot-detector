@@ -24,7 +24,7 @@ func openRepo(t *testing.T) (*storage.Repository, string) {
 
 func TestRepository_UpsertAndGetAllFiles(t *testing.T) {
 	repo, _ := openRepo(t)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 
 	ctx := context.Background()
 
@@ -56,7 +56,7 @@ func TestRepository_UpsertAndGetAllFiles(t *testing.T) {
 
 func TestRepository_DeleteFile(t *testing.T) {
 	repo, _ := openRepo(t)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 
 	ctx := context.Background()
 
@@ -111,7 +111,7 @@ func TestRepository_ShadowSwap_Commit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open (second run): %v", err)
 	}
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 
 	files, err := repo2.GetAllFiles(ctx)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestRepository_ShadowSwap_Rollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open (third run): %v", err)
 	}
-	defer repo3.Rollback()
+	defer func() { _ = repo3.Rollback() }()
 
 	files, _ := repo3.GetAllFiles(ctx)
 	if _, ok := files["/data/aborted.txt"]; ok {
@@ -164,7 +164,7 @@ func TestRepository_ShadowSwap_Rollback(t *testing.T) {
 
 func TestRepository_GetFilesForScrub(t *testing.T) {
 	repo, _ := openRepo(t)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 	ctx := context.Background()
 
 	for i := 0; i < 10; i++ {
@@ -188,7 +188,7 @@ func TestRepository_GetFilesForScrub(t *testing.T) {
 
 func TestRepository_UpdateScrubStatus(t *testing.T) {
 	repo, _ := openRepo(t)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 	ctx := context.Background()
 
 	rec := &domain.FileRecord{
@@ -217,7 +217,7 @@ func TestRepository_UpdateScrubStatus(t *testing.T) {
 
 func TestRepository_ComputeChecksum(t *testing.T) {
 	repo, dir := openRepo(t)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 
 	ctx := context.Background()
 	_ = repo.UpsertFile(ctx, &domain.FileRecord{
@@ -237,7 +237,7 @@ func TestRepository_ComputeChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open repo2: %v", err)
 	}
-	defer repo2.Rollback()
+	defer func() { _ = repo2.Rollback() }()
 
 	sum1, err := repo2.ComputeChecksum()
 	if err != nil {
@@ -268,7 +268,7 @@ func TestRepository_Close(t *testing.T) {
 
 func TestRepository_GetFilesForScrub_WithMinAgeDays(t *testing.T) {
 	repo, _ := openRepo(t)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 	ctx := context.Background()
 
 	// Add a file that has never been scrubbed.
@@ -292,7 +292,7 @@ func TestRepository_GetFilesForScrub_WithMinAgeDays(t *testing.T) {
 
 func TestRepository_UpsertFile_WithLastScrubbed(t *testing.T) {
 	repo, _ := openRepo(t)
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 	ctx := context.Background()
 
 	now := time.Now()
@@ -335,7 +335,7 @@ func TestRepository_StaleShadowRemovedOnOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer repo.Rollback()
+	defer func() { _ = repo.Rollback() }()
 
 	// Shadow must still exist (newly created), but must NOT contain "stale".
 	data, err := os.ReadFile(shadowPath)
@@ -344,5 +344,98 @@ func TestRepository_StaleShadowRemovedOnOpen(t *testing.T) {
 	}
 	if string(data) == "stale" {
 		t.Error("expected stale shadow to be replaced by fresh copy")
+	}
+}
+
+func TestRepository_RollbackWhenShadowGone(t *testing.T) {
+	repo, dir := openRepo(t)
+	// Manually remove the shadow file before calling Rollback.
+	shadow := filepath.Join(dir, "bitrot.db.shadow")
+	_ = os.Remove(shadow)
+	// Rollback must not panic or return an error when shadow is already gone.
+	if err := repo.Rollback(); err != nil {
+		t.Errorf("Rollback with missing shadow: %v", err)
+	}
+}
+
+func TestRepository_MultipleRollbacks(t *testing.T) {
+	repo, _ := openRepo(t)
+	// First rollback removes shadow.
+	if err := repo.Rollback(); err != nil {
+		t.Fatalf("first Rollback: %v", err)
+	}
+	// Second rollback is idempotent.
+	if err := repo.Rollback(); err != nil {
+		t.Errorf("second Rollback: %v", err)
+	}
+}
+
+func TestRepository_GetFilesForScrub_ZeroResults(t *testing.T) {
+	repo, _ := openRepo(t)
+	defer func() { _ = repo.Rollback() }()
+	ctx := context.Background()
+
+	// Empty database: GetFilesForScrub should return an empty slice, not an error.
+	files, err := repo.GetFilesForScrub(ctx, 100, nil)
+	if err != nil {
+		t.Fatalf("GetFilesForScrub on empty DB: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("expected 0 files from empty DB, got %d", len(files))
+	}
+}
+
+func TestRepository_UpsertFile_UpdatesHash(t *testing.T) {
+	repo, _ := openRepo(t)
+	defer func() { _ = repo.Rollback() }()
+	ctx := context.Background()
+
+	rec := &domain.FileRecord{
+		AbsPath:  "/data/update.txt",
+		Hash:     "oldhash",
+		FileSize: 10,
+		Mtime:    time.Now(),
+	}
+	_ = repo.UpsertFile(ctx, rec)
+
+	// Update the hash via a second upsert.
+	rec.Hash = "newhash"
+	_ = repo.UpsertFile(ctx, rec)
+
+	files, _ := repo.GetAllFiles(ctx)
+	if files["/data/update.txt"].Hash != "newhash" {
+		t.Errorf("expected updated hash 'newhash', got %q", files["/data/update.txt"].Hash)
+	}
+}
+
+func TestRepository_OpenInvalidDir(t *testing.T) {
+	// Trying to open a repository in a non-existent directory should fail.
+	_, err := storage.Open("/nonexistent/path/xyz/abc")
+	if err == nil {
+		t.Error("expected error opening repo in nonexistent dir")
+	}
+}
+
+func TestRepository_CommitThenRollback(t *testing.T) {
+	dir := t.TempDir()
+
+	repo, err := storage.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_ = repo.UpsertFile(ctx, &domain.FileRecord{
+		AbsPath:  "/data/x.txt",
+		Hash:     "h",
+		FileSize: 1,
+		Mtime:    time.Now(),
+	})
+	if err := repo.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Rollback after commit is idempotent (shadow is already gone).
+	if err := repo.Rollback(); err != nil {
+		t.Errorf("Rollback after Commit: %v", err)
 	}
 }

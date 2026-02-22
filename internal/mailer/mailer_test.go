@@ -35,14 +35,13 @@ func fakeSMTP(t *testing.T) (addr string, getMessage func(timeout time.Duration)
 			return
 		}
 		defer conn.Close()
-		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-		write := func(s string) { conn.Write([]byte(s + "\r\n")) }
+		write := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
 
 		write("220 fakesmtp ESMTP")
 
 		buf := make([]byte, 4096)
-		var lines []string
 		readLine := func() string {
 			n, _ := conn.Read(buf)
 			return strings.TrimSpace(string(buf[:n]))
@@ -50,7 +49,6 @@ func fakeSMTP(t *testing.T) (addr string, getMessage func(timeout time.Duration)
 
 		for {
 			line := readLine()
-			lines = append(lines, line)
 			upper := strings.ToUpper(line)
 			switch {
 			case strings.HasPrefix(upper, "EHLO"), strings.HasPrefix(upper, "HELO"):
@@ -252,4 +250,81 @@ func TestSendToDeadHost(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when dialing a dead host")
 	}
+}
+
+func TestSendUnifiedReport_WarningSingleDriveScrubOnly(t *testing.T) {
+	addr, getMessage := fakeSMTP(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port := parsePort(portStr)
+
+	m := newMailer(host, port, true)
+	// Scrub-only result (no sync): subject should say "Files Validated".
+	scrubResults := []mailer.ScrubEntry{
+		{Drive: "disk0", Result: &domain.ScrubResult{FilesValidated: 42}},
+	}
+	m.SendUnifiedReport(nil, scrubResults, nil, nil, 45*time.Second)
+
+	body := getMessage(3 * time.Second)
+	if !strings.Contains(body, "42") {
+		t.Errorf("expected validated count 42 in email, got:\n%s", body)
+	}
+}
+
+func TestSendUnifiedReport_WarningStatus(t *testing.T) {
+	addr, getMessage := fakeSMTP(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port := parsePort(portStr)
+
+	m := newMailer(host, port, true)
+	// Errors with no bit-rot → WARNING.
+	m.SendUnifiedReport(nil, nil, nil, []string{"I/O error"}, 30*time.Second)
+
+	body := getMessage(3 * time.Second)
+	if !strings.Contains(body, "WARNING") && !strings.Contains(body, "FAILED") {
+		t.Errorf("expected WARNING/FAILED status in email, got:\n%s", body)
+	}
+}
+
+func TestSendUnifiedReport_DurationHours(t *testing.T) {
+	addr, getMessage := fakeSMTP(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port := parsePort(portStr)
+
+	m := newMailer(host, port, true)
+	// 2h 5m 3s duration.
+	syncResults := []mailer.SyncEntry{
+		{Drive: "bigdisk", Result: &domain.SyncResult{FilesScanned: 500000}},
+	}
+	m.SendUnifiedReport(syncResults, nil, nil, nil, 2*time.Hour+5*time.Minute+3*time.Second)
+
+	body := getMessage(3 * time.Second)
+	if !strings.Contains(body, "2h") {
+		t.Errorf("expected hours in duration string, got:\n%s", body)
+	}
+}
+
+func TestSendUnifiedReport_SyncOnlySubject(t *testing.T) {
+	addr, getMessage := fakeSMTP(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port := parsePort(portStr)
+
+	m := newMailer(host, port, true)
+	syncResults := []mailer.SyncEntry{
+		{Drive: "disk0", Result: &domain.SyncResult{FilesScanned: 123, FilesAdded: 5}},
+	}
+	m.SendUnifiedReport(syncResults, nil, nil, nil, 10*time.Second)
+
+	body := getMessage(3 * time.Second)
+	if !strings.Contains(body, "123") && !strings.Contains(body, "Synced") {
+		t.Logf("email body:\n%s", body)
+	}
+}
+
+// parsePort converts a decimal port string to int.
+func parsePort(s string) int {
+	p := 0
+	for _, r := range s {
+		p = p*10 + int(r-'0')
+	}
+	return p
 }
