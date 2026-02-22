@@ -9,6 +9,7 @@ import (
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/hasher"
 )
 
+
 func TestComputeHash_Consistency(t *testing.T) {
 	h := hasher.New()
 
@@ -79,6 +80,56 @@ func TestComputeHash_ContextCancellation(t *testing.T) {
 func TestComputeHash_MissingFile(t *testing.T) {
 	h := hasher.New()
 	_, err := h.ComputeHash(context.Background(), "/nonexistent/path/file.bin")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestComputeHash_EmptyFile(t *testing.T) {
+	h := hasher.New()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "empty.bin")
+	if err := os.WriteFile(file, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := h.ComputeHash(context.Background(), file)
+	if err != nil {
+		t.Fatalf("unexpected error for empty file: %v", err)
+	}
+	if len(hash) == 0 {
+		t.Error("expected non-empty hash for empty file")
+	}
+	// Hashing the same empty file twice must be stable.
+	hash2, _ := h.ComputeHash(context.Background(), file)
+	if hash != hash2 {
+		t.Error("empty-file hash is not stable")
+	}
+}
+
+func TestComputeChecksumFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "db.sqlite")
+	if err := os.WriteFile(file, []byte("fake db content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sum1, err := hasher.ComputeChecksumFile(file)
+	if err != nil {
+		t.Fatalf("ComputeChecksumFile: %v", err)
+	}
+	if len(sum1) == 0 {
+		t.Error("expected non-empty checksum")
+	}
+
+	// Stable across calls.
+	sum2, _ := hasher.ComputeChecksumFile(file)
+	if sum1 != sum2 {
+		t.Error("checksum is not stable")
+	}
+}
+
+func TestComputeChecksumFile_Missing(t *testing.T) {
+	_, err := hasher.ComputeChecksumFile("/nonexistent/file.db")
 	if err == nil {
 		t.Error("expected error for missing file")
 	}

@@ -1,267 +1,297 @@
 # Bit Rot Detector
 
-A utility for detecting file corruption (bit rot) using BLAKE3 hashing with intelligent move detection and SMTP2GO notifications.
+A production-grade Go utility that detects silent file corruption (bit rot) using
+[BLAKE3](https://github.com/BLAKE3-team/BLAKE3) hashing, an atomic shadow-database
+swap for crash safety, and an IO-aware worker pool that adapts to both HDDs and SSDs.
+
+---
 
 ## Features
 
-- **BLAKE3 Hashing**: Fast, cryptographically secure file integrity verification
-- **Database Integrity**: BLAKE3 checksum validation via canary file prevents corrupted database usage
-- **Multi-Drive Support**: Concurrent processing of multiple drives with configurable worker threads  
-- **Atomic Transactions**: All database updates happen atomically at the end of successful runs
-- **Intelligent Move Detection**: Detects relocated files by matching size/mtime/hash, preserving scrub history
-- **Unified Reporting**: Single email report gathering stats, errors, and health metrics from all drives
-- **Drive Health Monitoring**: Tracks disk usage and SMART status (temperature, overall health)
-- **Configurable Scrubbing**: Verify a configurable percentage of files at daily/weekly/monthly intervals
-- **SMTP2GO Notifications**: Email alerts for new files, successful scrubs, and critical failures
-- **Canary Protection**: Prevents mass-deletion logic on unmounted drives
-- **Comprehensive Logging**: Configurable log levels with dual console/file output and automatic rotation
+| Feature | Detail |
+|---|---|
+| **BLAKE3 hashing** | Fast, cryptographically secure file integrity verification |
+| **Atomic Shadow-DB swap** | Crash-safe SQLite: production DB stays untouched until 100 % success |
+| **IO-aware concurrency** | 1 worker on HDD (no head thrashing); `NumCPU` workers on SSD/NVMe |
+| **Multi-drive support** | Concurrent processing of multiple mount points |
+| **Intelligent move detection** | Relocates files by size+mtime match, preserves scrub history |
+| **Canary protection** | Aborts if `.bitrot-canary` is missing (unmounted drive guard) |
+| **DB checksum verification** | BLAKE3 digest of `bitrot.db` stored in canary; mismatch aborts |
+| **Scrub scheduling** | Configurable percentage + daily / weekly / monthly frequency |
+| **Structured JSON logging** | `slog`-based, level-filtered, writes to stderr |
+| **SMTP notifications** | Unified end-of-run report with drive health, sync + scrub stats |
+| **Static binary** | `CGO_ENABLED=0`; no runtime dependencies |
 
-## Installation
+---
 
-This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
+## Quick Start
 
-```bash
-# Clone the repository
-cd /path/to/bit-rot-detector
-
-# Install dependencies with uv
-uv sync
-
-# Install development dependencies (for testing)
-uv sync --extra dev
-```
-
-## Testing
-
-The project includes a comprehensive test suite using pytest.
+### Build from source
 
 ```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage report
-uv run pytest --cov=src/bit_rot
-
-# Run specific test file
-uv run pytest tests/test_config.py -v
-
-# Run with verbose output
-uv run pytest -v
+# Requires Go 1.21+
+make build                   # → ./bin/bit-rot-detector
 ```
 
-Test coverage reports are generated in `htmlcov/` directory.
-
-## Configuration
-
-Configuration is managed through environment variables. A template is provided:
-
-1. Copy the example environment file:
+### Docker
 
 ```bash
-cp .env.example .env
+# Run with Docker Compose (edit docker-compose.yml first)
+docker compose up
 ```
 
-2. Edit `.env` with your settings. See [`.env.example`](.env.example) for all available options and detailed documentation.
+### Pull from GHCR
 
 ```bash
-# Target directory(ies) to monitor
-# Single drive:
-TARGET_DIRECTORY=/path/to/monitor
-# Multiple drives (comma separated):
-# TARGET_DIRECTORY=/path/to/drive1,/path/to/drive2
-
-# Performance
-MAX_WORKERS=4                 # Max concurrent workers for multi-drive processing
-
-### Email Notifications
-
-Configure SMTP settings and notification preferences:
-
-# SMTP Configuration
-SMTP_HOST=mail.smtp2go.com
-SMTP_PORT=587
-SMTP_USERNAME=your_username
-SMTP_PASSWORD=your_password
-SMTP_SENDER=sender@example.com
-SMTP_RECIPIENT=recipient@example.com
-
-# Notification Preferences
-# Notification Preferences
-NOTIFY_ON_SUCCESS=true         # Send email on success (failures always sent)
-
-# Scrub configuration
-SCRUB_PERCENTAGE=1.0          # 0.1 to 100.0
-SCRUB_FREQUENCY=daily         # daily, weekly, or monthly
-
-# Logging
-LOG_RETENTION_DAYS=7          # Days to keep log files
-LOG_LEVEL=INFO                # DEBUG, INFO, WARNING, ERROR, or CRITICAL
+docker pull ghcr.io/yaoxuanzhang/bit-rot-detector:latest
 ```
 
-3. Create the canary file in your target directory:
-
-```bash
-touch /path/to/monitor/.bitrot-canary
-```
-
-**Important**: The canary file prevents the tool from running if the target directory is unmounted (e.g., external drive). If the canary is missing, the tool will abort to prevent marking all files as deleted.
+---
 
 ## Usage
 
-### Test Email Configuration
+```text
+bit-rot-detector [flags]
 
-Before running scans, verify your SMTP configuration:
-
-```bash
-uv run bit-rot-detector --test-email
+Flags:
+  -sync         run sync operation only
+  -scrub        run scrub operation only
+  -test-email   send a test email and exit
 ```
 
-### Run Sync Only
+Without flags, both sync and scrub run in sequence.
 
-Scan the directory, detect new/moved/deleted files:
+### Prerequisites
 
-```bash
-uv run bit-rot-detector --sync
-```
+1. **Canary file** — create a marker file in every monitored directory:
 
-### Run Scrub Only
+   ```bash
+   touch /path/to/drive/.bitrot-canary
+   ```
 
-Re-verify file hashes to detect bit rot:
+   The tool refuses to run if the canary is absent.  This protects against
+   an unmounted drive being treated as "all files deleted".
 
-```bash
-uv run bit-rot-detector --scrub
-```
+2. **Configuration** — copy `.env.example` to `.env` and fill in values, or
+   export the variables directly.
 
-### Run Both (Default)
-
-Run sync followed by scrub across all configured drives:
+### Examples
 
 ```bash
-uv run bit-rot-detector
+# Sync only (record new / modified / moved / deleted files)
+TARGET_DIRECTORY=/mnt/nas bit-rot-detector -sync
+
+# Full run: sync then scrub 1 % of files
+TARGET_DIRECTORY=/mnt/nas bit-rot-detector
+
+# Scrub 100 % of files
+TARGET_DIRECTORY=/mnt/nas SCRUB_PERCENTAGE=100 bit-rot-detector -scrub
+
+# Monitor two drives
+TARGET_DIRECTORY=/mnt/drive1,/mnt/drive2 bit-rot-detector
+
+# Verify SMTP settings
+TARGET_DIRECTORY=/mnt/nas bit-rot-detector -test-email
 ```
+
+---
+
+## Configuration
+
+All settings are read from environment variables (`.env` is auto-loaded from the
+working directory if it exists; environment variables always take precedence).
+
+| Variable | Default | Description |
+|---|---|---|
+| `TARGET_DIRECTORY` | *(required)* | Comma-separated list of absolute paths to monitor |
+| `SCRUB_PERCENTAGE` | `1.0` | Fraction of files to re-verify per run (0.1 – 100.0) |
+| `SCRUB_FREQUENCY` | `daily` | Age filter for scrub selection: `daily`, `weekly`, `monthly` |
+| `MAX_WORKERS` | `4` | Upper bound on hashing goroutines (IO-aware detection may lower this) |
+| `LOG_LEVEL` | `INFO` | Minimum log severity: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `LOG_RETENTION_DAYS` | `7` | Days to retain old log files |
+| `SMTP_HOST` | `mail.smtp2go.com` | SMTP server hostname |
+| `SMTP_PORT` | `587` | SMTP server port |
+| `SMTP_USERNAME` | | SMTP authentication username |
+| `SMTP_PASSWORD` | | SMTP authentication password |
+| `SMTP_SENDER` | | Envelope sender address |
+| `SMTP_RECIPIENT` | | Envelope recipient address |
+| `NOTIFY_ON_SUCCESS` | `true` | Send email on clean runs (failure/corruption emails are always sent) |
+
+See [`.env.example`](.env.example) for a fully annotated template.
+
+---
 
 ## How It Works
 
-### The "Sync & Scrub" Pattern
+### Sync phase
 
-1. **Canary Check**: Verifies `.bitrot-canary` exists and reads stored database checksum
-2. **Database Validation**: Compares BLAKE3 checksum of database with stored value (aborts if mismatch)
-3. **Phase 1 - Sync**: Walks directory tree, records file metadata (size, mtime, hash)
-4. **Phase 2 - Modification Detection**: Compares size/mtime with database, re-hashes only changed files
-5. **Phase 3 - Move Detection**: Identifies relocated files by matching size/mtime, then verifying hash
-6. **Phase 4 - Deletion Detection**: Removes database entries for files not seen in current session
-7. **Phase 5 - Scrubbing**: Re-verifies a configurable percentage of files (oldest first) to detect bit rot
-8. **Checksum Update**: Updates canary file with new database checksum after successful operations
+1. **Canary pre-check** — confirm `.bitrot-canary` exists; read stored DB checksum.
+2. **DB integrity check** — compare BLAKE3 digest of `bitrot.db` with the value
+   stored in the canary; abort on mismatch.
+3. **Shadow DB open** — copy `bitrot.db` to `bitrot.db.shadow`; all writes target
+   the shadow.
+4. **Directory walk** — recursive walker sends `WorkItem`s into a buffered channel.
+5. **Worker pool** — N goroutines read from the channel, hash each file with BLAKE3,
+   and send `WorkResult`s back.
+6. **Collector** — compares results against stored records; classifies each file as
+   *new*, *modified*, *moved*, or *unchanged*.
+7. **Deletion sweep** — records for files no longer on disk are removed.
+8. **Canary post-check** — confirm the canary still exists (drive may have
+   unmounted during the scan).
+9. **Shadow DB commit** — `os.Rename(shadow → prod)` atomically replaces the
+   production database.
+10. **Canary update** — new BLAKE3 digest of `bitrot.db` is written to the canary.
 
-### Multi-Drive Processing
+### Scrub phase
 
-Drives are processed concurrently using a thread pool. The number of concurrent workers is configurable via `MAX_WORKERS`. Each drive is handled independently with its own database connection and transaction.
+Re-hashes a configurable percentage of previously recorded files (oldest-scrubbed
+first).  A hash mismatch is reported as a **BIT ROT DETECTED** event and included
+in the notification email.
 
-### Unified Reporting
+The `SCRUB_FREQUENCY` setting adds an age filter so that, for example, with
+`SCRUB_FREQUENCY=weekly` only files not scrubbed in the last 7 days are eligible,
+even if `SCRUB_PERCENTAGE=100`.
 
-A single email report is sent at the end of the program run, aggregating results from all drives. The report includes:
-- **Drive Health**: Disk usage and SMART status (temperature, health) for each drive
-- **Sync Stats**: Files scanned, added, modified, moved, and removed
-- **Scrub Stats**: Files validated and corruption detected
-- **Errors**: Any errors encountered during processing
+### IO-aware worker pool
 
-### Atomic Transactions
+On Linux, the tool reads `/sys/block/<dev>/queue/rotational` to detect the drive
+type:
 
-All database updates are staged during the scan and committed atomically at the end. If the scan fails, no changes are written to the database.
+| Drive type | Workers |
+|---|---|
+| HDD (rotational) | 1 (prevents seek thrashing) |
+| SSD / NVMe | `runtime.NumCPU()` |
+| Unknown / non-Linux | `runtime.NumCPU()` |
 
-### Scrub Frequency
+The `MAX_WORKERS` setting is an upper bound; the IO-aware detection may reduce
+the count further.
 
-- **daily**: Scrub any eligible files (no age filter)
-- **weekly**: Only scrub files not verified in the last 7 days
-- **monthly**: Only scrub files not verified in the last 30 days
+### Crash safety
 
-This allows you to scrub a small percentage daily while ensuring all files are eventually verified.
+If the process is interrupted at any point before the final `os.Rename`, the
+shadow file is deleted on the next startup and the production database remains the
+"Last Known Good" state.  No partial writes ever reach `bitrot.db`.
 
-## Cron Job Setup
+---
 
-For daily automated scans, add to your crontab:
+## Architecture
+
+```
+cmd/bit-rot-detector/
+  main.go             signal.NotifyContext graceful shutdown, slog setup
+
+internal/
+  domain/
+    interfaces.go     Hasher + Repository interfaces
+    models.go         FileRecord, SyncResult, ScrubResult, DriveHealth, WorkItem/Result
+
+  hasher/
+    hasher.go         BLAKE3 via zeebo/blake3; context-cancellation aware
+
+  storage/
+    repository.go     modernc.org/sqlite (CGO-free); shadow-DB swap logic
+
+  scanner/
+    scanner.go        Syncer: SyncDirectory + ScrubFiles (producer-consumer pool)
+
+  monitor/
+    drive.go          IO-aware detection via /sys/block/<dev>/queue/rotational
+
+  mailer/
+    mailer.go         SMTP STARTTLS; unified end-of-run report builder
+
+  config/
+    config.go         Environment-variable config with validation
+
+  coordinator/
+    coordinator.go    Multi-drive orchestration; per-drive goroutines
+    statfs_unix.go    disk-usage via syscall.Statfs (Linux/macOS)
+    statfs_windows.go disk-usage via GetDiskFreeSpaceEx (Windows)
+```
+
+---
+
+## Development
+
+### Prerequisites
+
+- Go 1.21+
+- `golangci-lint` (optional, for `make lint`)
+
+### Common tasks
 
 ```bash
-# Edit crontab
-crontab -e
-
-# Add this line to run daily at 2 AM
-0 2 * * * cd /path/to/bit-rot-detector && /path/to/uv run bit-rot-detector >> /var/log/bitrot-cron.log 2>&1
+make build          # compile static binary → ./bin/bit-rot-detector
+make test           # go test -v -race ./...
+make test-cover     # tests + coverage report → coverage.html
+make vet            # go vet ./...
+make lint           # golangci-lint run ./...
+make fmt            # gofmt in-place
+make tidy           # go mod tidy && go mod verify
+make clean          # remove ./bin/ and coverage artefacts
 ```
 
-Or use a more specific schedule:
+### Running tests
 
 ```bash
-# Run sync daily at 2 AM
-0 2 * * * cd /path/to/bit-rot-detector && /path/to/uv run bit-rot-detector --sync
-
-# Run scrub weekly on Sundays at 3 AM
-0 3 * * 0 cd /path/to/bit-rot-detector && /path/to/uv run bit-rot-detector --scrub
+go test -v -race ./...
 ```
 
-## Logging
+Tests are fully self-contained and use `t.TempDir()` for isolation; no external
+services are required.  The mailer tests spin up a local in-process fake SMTP
+listener.
 
-All operations are logged with rotation and automatic cleanup:
-- **Console**: Configurable log level via `LOG_LEVEL` (default: INFO)
-  - Supported levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
-- **Log Files**: DEBUG level and above, stored in `logs/` directory
-  - Format: `bitrot_YYYYMMDD_HHMMSS.log` (timestamped per run)
-  - Retention: Configurable via `LOG_RETENTION_DAYS` (default: 7 days)
-  - Old logs are automatically deleted on each run
+---
 
-Log format: `[TIMESTAMP] [LEVEL] [MODULE][DRIVE] - Message`
+## CI / CD
 
-Example log files:
-```
-logs/bitrot_20260129_023045.log
-logs/bitrot_20260129_140522.log
-logs/bitrot_20260130_023001.log
-```
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `validate.yml` | Every push / PR | `go vet`, `go test -race`, coverage upload, `golangci-lint` |
+| `docker.yml` | Push to main/master, version tags | Builds multi-arch image and pushes to GHCR |
+
+### GHCR image tags
+
+| Event | Tags produced |
+|---|---|
+| `v1.2.3` release | `1.2.3` · `1.2` · `1` · `latest` · `sha-<hash>` |
+| `v1.2.3-beta.1` pre-release | `1.2.3-beta.1` · `1.2` · `sha-<hash>` |
+| Push to `main` | `main` · `sha-<hash>` |
+| Pull request | Build-only validation (no push) |
+
+`latest` and rolling major tags are suppressed for pre-releases and `v0.x`.
+
+---
 
 ## Database Schema
 
-SQLite database (`bitrot.db`) located in the root of each monitored directory with a single `files` table:
+A `bitrot.db` SQLite file is stored in the root of each monitored directory.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| abs_path | TEXT (PK) | Absolute file path |
-| hash | TEXT | BLAKE3 hash |
-| added_at | TEXT | ISO timestamp when first added |
-| last_seen | TEXT | ISO timestamp of last sync |
-| last_scrubbed | TEXT | ISO timestamp of last scrub |
-| scrub_count | INTEGER | Number of times scrubbed |
-| file_size | INTEGER | File size in bytes |
-| mtime | REAL | File modification time (Unix timestamp) |
+```sql
+CREATE TABLE files (
+    abs_path      TEXT PRIMARY KEY,
+    hash          TEXT    NOT NULL,
+    added_at      TEXT    NOT NULL,
+    last_seen     TEXT    NOT NULL,
+    last_scrubbed TEXT,
+    scrub_count   INTEGER NOT NULL DEFAULT 0,
+    file_size     INTEGER NOT NULL,
+    mtime         REAL    NOT NULL
+);
+```
 
-## Error Handling
+---
 
-- **Permission Errors**: Files that cannot be read are logged and skipped
-- **I/O Errors**: Filesystem errors are caught and logged
-- **Database Corruption**: Detected on startup with clear recovery instructions
-- **Canary Missing**: Operations aborted before any database changes
-- **SMTP Failures**: Email errors logged but don't stop operations
+## Cron example
 
-## Known Limitations
+```cron
+# Daily sync + scrub at 02:00
+0 2 * * * TARGET_DIRECTORY=/mnt/nas /usr/local/bin/bit-rot-detector
+```
 
-- **Symlinks**: Not followed (prevents infinite loops and tracking files outside target directory)
-- **Move + Modify**: If a file is both moved and modified between scans, scrub history is lost (treated as new file)
-- **Hardlinks**: Multiple hardlinks to same inode are tracked separately (inefficient but correct)
-- **FAT32 Filesystems**: 2-second timestamp precision may miss some rapid modifications (size comparison provides additional protection)
-- **Case-Insensitive Filesystems**: On macOS/Windows, files differing only in case may cause issues
-
-## Notifications
-
-Email notifications are sent based on your configuration:
-
-- **Success** (`NOTIFY_ON_SUCCESS=true`): Report sent when operation completes without issues
-- **Failure/Warning** (Always Sent): Report sent when bit rot is detected or errors occur
-
-All emails are sent as a **Unified Report** containing:
-1. Overall Status
-2. Drive Health Metrics (Usage, Temp, SMART)
-3. Aggregated Statistics
-4. Detailed Error Logs (if any)
+---
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT — see [LICENSE](LICENSE).
+

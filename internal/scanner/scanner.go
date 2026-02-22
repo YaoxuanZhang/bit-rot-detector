@@ -1,5 +1,31 @@
 // Package scanner implements directory walking, file-integrity sync, and
 // periodic scrubbing using a producer-consumer worker pool.
+//
+// # Sync
+//
+// A sync operation walks an entire directory tree and, for each regular file,
+// determines whether the file is new, modified, moved, or deleted relative to
+// the contents of the integrity database.  Only files whose size or mtime
+// differ from the stored values are re-hashed; unchanged files are recorded as
+// "seen" without any I/O.
+//
+// # Scrub
+//
+// A scrub operation re-hashes a configurable percentage of files that were
+// previously recorded by a sync.  Files are selected in least-recently-scrubbed
+// order so that all files are eventually verified.  A hash mismatch indicates
+// silent data corruption (bit rot).
+//
+// # Worker pool
+//
+// The directory walker runs as a producer goroutine that sends [domain.WorkItem]
+// values into a buffered channel.  A pool of N consumer goroutines reads from
+// the channel, hashes each file using [domain.Hasher], and sends
+// [domain.WorkResult] values back through a second channel.  The collector
+// goroutine receives results and writes them to the [domain.Repository].
+//
+// The worker count N is supplied by the caller and is typically determined by
+// [monitor.Detect] to avoid head thrashing on spinning-platter drives.
 package scanner
 
 import (

@@ -214,3 +214,135 @@ func TestRepository_UpdateScrubStatus(t *testing.T) {
 		t.Error("expected LastScrubbed to be set")
 	}
 }
+
+func TestRepository_ComputeChecksum(t *testing.T) {
+	repo, dir := openRepo(t)
+	defer repo.Rollback()
+
+	ctx := context.Background()
+	_ = repo.UpsertFile(ctx, &domain.FileRecord{
+		AbsPath:  "/data/a.txt",
+		Hash:     "abc",
+		FileSize: 1,
+		Mtime:    time.Now(),
+	})
+
+	// Commit so the production DB exists and has real content.
+	if err := repo.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Open a new repo pointing at the same dir so the shadow file exists.
+	repo2, err := storage.Open(dir)
+	if err != nil {
+		t.Fatalf("open repo2: %v", err)
+	}
+	defer repo2.Rollback()
+
+	sum1, err := repo2.ComputeChecksum()
+	if err != nil {
+		t.Fatalf("ComputeChecksum: %v", err)
+	}
+	if len(sum1) == 0 {
+		t.Error("expected non-empty checksum")
+	}
+
+	// Checksum must be stable.
+	sum2, _ := repo2.ComputeChecksum()
+	if sum1 != sum2 {
+		t.Error("checksum is not stable")
+	}
+}
+
+func TestRepository_Close(t *testing.T) {
+	repo, _ := openRepo(t)
+	// Close should not error on an open connection.
+	if err := repo.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	// Second Close should also not error (conn already nil).
+	if err := repo.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
+}
+
+func TestRepository_GetFilesForScrub_WithMinAgeDays(t *testing.T) {
+	repo, _ := openRepo(t)
+	defer repo.Rollback()
+	ctx := context.Background()
+
+	// Add a file that has never been scrubbed.
+	_ = repo.UpsertFile(ctx, &domain.FileRecord{
+		AbsPath:  "/data/never-scrubbed.txt",
+		Hash:     "h",
+		FileSize: 1,
+		Mtime:    time.Now(),
+	})
+
+	// minAgeDays=7: file never scrubbed qualifies.
+	days := 7
+	files, err := repo.GetFilesForScrub(ctx, 100, &days)
+	if err != nil {
+		t.Fatalf("GetFilesForScrub: %v", err)
+	}
+	if len(files) == 0 {
+		t.Error("expected file to qualify for scrub (never scrubbed)")
+	}
+}
+
+func TestRepository_UpsertFile_WithLastScrubbed(t *testing.T) {
+	repo, _ := openRepo(t)
+	defer repo.Rollback()
+	ctx := context.Background()
+
+	now := time.Now()
+	rec := &domain.FileRecord{
+		AbsPath:      "/data/scrubbed.txt",
+		Hash:         "h",
+		FileSize:     1,
+		Mtime:        now,
+		LastScrubbed: &now,
+		ScrubCount:   3,
+	}
+	if err := repo.UpsertFile(ctx, rec); err != nil {
+		t.Fatalf("UpsertFile with LastScrubbed: %v", err)
+	}
+
+	files, _ := repo.GetAllFiles(ctx)
+	got := files["/data/scrubbed.txt"]
+	if got == nil {
+		t.Fatal("file not found")
+	}
+	if got.ScrubCount != 3 {
+		t.Errorf("expected scrub_count=3, got %d", got.ScrubCount)
+	}
+	if got.LastScrubbed == nil {
+		t.Error("expected LastScrubbed to be preserved")
+	}
+}
+
+func TestRepository_StaleShadowRemovedOnOpen(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a stale shadow file.
+	shadowPath := filepath.Join(dir, "bitrot.db.shadow")
+	if err := os.WriteFile(shadowPath, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Opening a new repository should silently remove the stale shadow.
+	repo, err := storage.Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer repo.Rollback()
+
+	// Shadow must still exist (newly created), but must NOT contain "stale".
+	data, err := os.ReadFile(shadowPath)
+	if err != nil {
+		t.Fatalf("read shadow: %v", err)
+	}
+	if string(data) == "stale" {
+		t.Error("expected stale shadow to be replaced by fresh copy")
+	}
+}

@@ -1,5 +1,13 @@
-// Package config loads application configuration from environment variables
-// (optionally via a .env file loaded by the caller).
+// Package config loads application configuration from environment variables.
+//
+// Configuration is read exclusively from the process environment.  When the
+// binary is started, the caller (cmd/bit-rot-detector) first loads a .env
+// file via [github.com/joho/godotenv] so that the variables are already
+// present in the environment before [Load] is called.  Environment variables
+// always take precedence over values in .env.
+//
+// See .env.example in the repository root for a documented list of all
+// supported variables and their default values.
 package config
 
 import (
@@ -11,18 +19,38 @@ import (
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/mailer"
 )
 
-// Config holds all application settings.
+// Config holds all application settings resolved at startup.
 type Config struct {
-	TargetPaths     []string
-	Email           mailer.Config
+	// TargetPaths is the deduplicated list of directory paths to monitor.
+	// Populated from TARGET_DIRECTORY (comma-separated).
+	TargetPaths []string
+
+	// Email contains the SMTP connection and notification settings.
+	Email mailer.Config
+
+	// ScrubPercentage is the fraction of files to re-verify per run (0.1–100.0).
 	ScrubPercentage float64
-	ScrubFrequency  string
-	MaxWorkers      int
-	LogLevel        string
+
+	// ScrubFrequency controls the minimum age filter applied when selecting
+	// files for scrubbing: "daily" (no age filter), "weekly" (≥7 days since
+	// last scrub), or "monthly" (≥30 days).
+	ScrubFrequency string
+
+	// MaxWorkers is the upper bound on the number of concurrent hashing
+	// goroutines.  The IO-aware monitor may further reduce this per drive.
+	MaxWorkers int
+
+	// LogLevel controls the minimum severity for console log output.
+	// Valid values: DEBUG, INFO, WARN, ERROR.
+	LogLevel string
+
+	// LogRetentionDays is the number of days to retain old log files.
 	LogRetentionDays int
 }
 
-// Load reads configuration from environment variables.
+// Load reads and validates configuration from environment variables.
+// It returns a populated [Config] or an error describing the first
+// validation failure encountered.
 func Load() (*Config, error) {
 	targetDirStr := os.Getenv("TARGET_DIRECTORY")
 	if targetDirStr == "" {

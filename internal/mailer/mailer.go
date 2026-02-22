@@ -16,13 +16,28 @@ const separatorWidth = 40
 
 // Config holds SMTP configuration.
 type Config struct {
-	Host             string
-	Port             int
-	Username         string
-	Password         string
-	Sender           string
-	Recipient        string
-	NotifyOnSuccess  bool
+	// Host is the SMTP server hostname (e.g. "mail.smtp2go.com").
+	Host string
+
+	// Port is the SMTP server port (typically 587 for STARTTLS).
+	Port int
+
+	// Username is the SMTP authentication username.
+	Username string
+
+	// Password is the SMTP authentication password.
+	Password string
+
+	// Sender is the RFC 5321 envelope sender address.
+	Sender string
+
+	// Recipient is the RFC 5321 envelope recipient address.
+	Recipient string
+
+	// NotifyOnSuccess controls whether an email is sent when the run
+	// completes without errors or corruption.  Failure/corruption emails are
+	// always sent regardless of this setting.
+	NotifyOnSuccess bool
 }
 
 // Mailer sends email notifications.
@@ -91,13 +106,13 @@ If you received this, your SMTP configuration is working correctly.
 	return m.send(subject, body)
 }
 
-// SyncEntry associates a drive name with its SyncResult.
+// SyncEntry associates a drive name with its [domain.SyncResult].
 type SyncEntry struct {
 	Drive  string
 	Result *domain.SyncResult
 }
 
-// ScrubEntry associates a drive name with its ScrubResult.
+// ScrubEntry associates a drive name with its [domain.ScrubResult].
 type ScrubEntry struct {
 	Drive  string
 	Result *domain.ScrubResult

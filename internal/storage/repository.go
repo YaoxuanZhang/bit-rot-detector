@@ -1,15 +1,22 @@
 // Package storage provides the SQLite-backed Repository with an
 // Atomic Shadow-DB Swap pattern for safe crash recovery.
 //
-// Workflow:
-//  1. On open, the production DB (bitrot.db) is copied to a shadow file
-//     (bitrot.db.shadow).
-//  2. All reads and writes target the shadow file during the scan.
-//  3. On Commit(), the shadow file is atomically renamed over the production
-//     file (os.Rename is atomic on POSIX systems when both files are on the
-//     same filesystem).
-//  4. On Rollback() or a crash, the shadow file is deleted; the production
-//     file remains the "Last Known Good" state.
+// # Shadow-DB Swap
+//
+// On [Open], the production database (bitrot.db) is copied to a temporary
+// shadow file (bitrot.db.shadow).  All reads and writes during a run target
+// the shadow.  On a successful [Repository.Commit], the shadow is atomically
+// renamed over the production file using [os.Rename], which is guaranteed to
+// be atomic on POSIX filesystems when both files reside on the same device.
+//
+// If the process is interrupted at any point before Commit, the shadow file
+// can be safely deleted (or will be overwritten on the next run) and the
+// production database remains unchanged.
+//
+// # Driver
+//
+// The CGO-free [modernc.org/sqlite] driver is used so the binary can be built
+// without a C toolchain and deployed as a fully static binary.
 package storage
 
 import (

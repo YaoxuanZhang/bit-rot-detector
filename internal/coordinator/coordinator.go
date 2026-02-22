@@ -22,21 +22,44 @@ import (
 )
 
 // DriveResult holds the outcome of processing a single drive.
+// A nil SyncResult or ScrubResult means the corresponding phase was not run.
 type DriveResult struct {
-	Drive       string
-	Health      *domain.DriveHealth
-	SyncResult  *domain.SyncResult
+	// Drive is a human-readable label derived from the mount-point base name.
+	Drive string
+
+	// Health contains disk-usage statistics collected at the start of the run.
+	Health *domain.DriveHealth
+
+	// SyncResult is the outcome of the sync phase, or nil if RunSync was false.
+	SyncResult *domain.SyncResult
+
+	// ScrubResult is the outcome of the scrub phase, or nil if RunScrub was false.
 	ScrubResult *domain.ScrubResult
-	Err         error
+
+	// Err is non-nil if a fatal error occurred during processing of this drive.
+	// When Err is non-nil, SyncResult and ScrubResult may be nil or partial.
+	Err error
 }
 
-// Options configures what operations to run.
+// Options configures what operations to run on each drive.
 type Options struct {
-	RunSync         bool
-	RunScrub        bool
+	// RunSync enables the sync phase (directory walk + hash comparison).
+	RunSync bool
+
+	// RunScrub enables the scrub phase (re-hash a percentage of stored files).
+	RunScrub bool
+
+	// ScrubPercentage is the fraction of stored files to re-verify per run
+	// (0.1–100.0).  Passed directly to [domain.Repository.GetFilesForScrub].
 	ScrubPercentage float64
-	ScrubFrequency  string
-	MaxWorkers      int // upper bound; IO-aware detection may lower this per drive
+
+	// ScrubFrequency controls the minimum-age filter for scrub selection:
+	// "daily" (no filter), "weekly" (≥7 days), or "monthly" (≥30 days).
+	ScrubFrequency string
+
+	// MaxWorkers is the upper bound on hashing workers per drive.
+	// The IO-aware [monitor.Detect] call may further reduce this.
+	MaxWorkers int
 }
 
 // Run processes all target drives concurrently and returns aggregated results.
