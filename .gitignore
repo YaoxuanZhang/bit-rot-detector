@@ -69,6 +69,11 @@ test_email_scenarios/
 *.whl
 *.tar.gz
 
+# Go build artefacts
+/bin/
+coverage.out
+coverage.html
+
 # Jupyter Notebooks
 .ipynb_checkpoints
 *.ipynb

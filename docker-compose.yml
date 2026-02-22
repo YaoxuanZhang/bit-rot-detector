@@ -1,0 +1,41 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bit Rot Detector – docker-compose.yml
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your settings.
+#   2. Create .bitrot-canary in your target directory:
+#        touch /path/to/data/.bitrot-canary
+#   3. Run once (sync + scrub):
+#        docker compose run --rm bit-rot-detector
+#   4. Run sync only:
+#        docker compose run --rm bit-rot-detector --sync
+#   5. Run scrub only:
+#        docker compose run --rm bit-rot-detector --scrub
+#   6. Test email:
+#        docker compose run --rm bit-rot-detector --test-email
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  bit-rot-detector:
+    image: bit-rot-detector:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      # Mount the directory (or directories) you want to monitor.
+      # The container path must match TARGET_DIRECTORY in your .env.
+      - ${TARGET_DIRECTORY:-/data}:${TARGET_DIRECTORY:-/data}:rw
+    # The container runs as UID 65534 (nobody); ensure the target directory
+    # is readable by that user, or override the user here.
+    # user: "0:0"
+    restart: "no"
+    # Resource limits – tune to your hardware
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "512M"
