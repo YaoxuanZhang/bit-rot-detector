@@ -13,6 +13,7 @@ import { formatDate, formatRelative, formatBytes, formatNumber } from '../lib/fo
 interface Props {
   status: StatusResponse | null
   expanded: boolean
+  collapsing?: boolean
   onExpand: () => void
   onCollapse: () => void
   onRefresh: () => void
@@ -46,7 +47,7 @@ function labelFromPath(path: string): string {
   return parts[parts.length - 1] || path
 }
 
-export default function RunCard({ status, expanded, onExpand, onCollapse, onRefresh, registerRefresh }: Props) {
+export default function RunCard({ status, expanded, collapsing, onExpand, onCollapse, onRefresh, registerRefresh }: Props) {
   const [progMap, setProgMap] = useState<Record<string, DriveProgress>>({})
   const [busy, setBusy] = useState(false)
   const [drivesData, setDrivesData] = useState<DrivesResponse | null>(null)
@@ -116,11 +117,13 @@ export default function RunCard({ status, expanded, onExpand, onCollapse, onRefr
   const cardRef = useRef<HTMLDivElement>(null)
   const activeProgress = Object.entries(progMap).filter(([, p]) => p.phase !== 'done')
 
+  const cardClass = ['card', expanded ? 'expanded' : '', collapsing ? 'collapsing' : ''].filter(Boolean).join(' ')
+
   return (
     <div
       ref={cardRef}
-      className={`card${expanded ? ' expanded' : ''}`}
-      onClick={!expanded ? onExpand : undefined}
+      className={cardClass}
+      onClick={!expanded && !collapsing ? onExpand : undefined}
     >
       <div className="card-header">
         <span className="card-title">Run</span>

@@ -1,260 +1,199 @@
 # Bit Rot Detector — Dashboard Plan
 
-> **Status**: In progress on branch `copilot/redesign-config-architecture`  
-> This document tracks all planned and in-progress work for the card-based dashboard redesign.
+> **Branch**: `copilot/redesign-config-architecture`  
+> **Stack**: React 18 · Vite 5 · TypeScript 5 · Chart.js 4  
+> **Build**: `make ui` (npm build → `internal/api/static/`) then `make build-go`
 
 ---
 
 ## Goals
 
 1. **Fully-featured dashboard** for the nominal use-case: monitor N drives, trigger scans, review history, tweak config — without leaving the browser.
-2. **No modals / popups** — cards physically expand in-place with animated transitions.
-3. **Live progress** — scan progress is visible in real-time via SSE.
-4. **Drives visible on page load** — disk list is eagerly loaded before any scan runs.
+2. **No modals / popups** — cards physically expand in-place with animated CSS transitions.
+3. **Live progress** — sync and scrub progress visible in real-time via Server-Sent Events.
+4. **Drives visible on page load** — disk list is eagerly loaded from `GET /api/drives` before any scan runs.
 5. **Editable config** — all non-secret settings are editable from the Settings card and persisted to `config.yaml`.
+6. **Auto-refresh** — History card and status refresh automatically when a run completes (SSE `done` event).
 
 ---
 
-## Architecture overview
+## Architecture
 
 ```
 Browser (React / Vite)
-  ├── App.tsx             — grid shell, SSE orchestration, global state
-  ├── cards/RunCard.tsx   — drive grid, scan controls, live progress, failures
+  ├── App.tsx              — grid shell, SSE orchestration, global state
+  ├── cards/RunCard.tsx    — drive grid, scan controls, live progress, failures
   ├── cards/HistoryCard.tsx — run history table, corruption events, compare modal
   └── cards/SettingsCard.tsx — thresholds, notifications, schedule, config editor
 
-Go backend
-  ├── GET  /api/status      — aggregated drive status (last run + running flag)
-  ├── GET  /api/drives      — drive paths + health (available before first run)
-  ├── GET  /api/progress    — SSE stream of ProgressEvent during scan/scrub
-  ├── GET  /api/history     — RunRecord[] from each drive's SQLite DB
-  ├── GET  /api/corruption  — runs with files_corrupted > 0
-  ├── GET  /api/compare     — delta between two run IDs
-  ├── GET  /api/config      — full config (secrets redacted)
-  ├── POST /api/config      — patch runtime-mutable config keys → saved to YAML
-  ├── GET  /api/settings    — disk thresholds + notification rules
-  ├── POST /api/settings    — update thresholds + notifications
-  ├── GET  /api/schedule    — schedule entries
-  ├── POST /api/schedule    — upsert a schedule entry
-  ├── POST /api/sync        — trigger sync (all drives)
-  ├── POST /api/scrub       — trigger scrub (all drives)
+Go backend (internal/api/server.go)
+  ├── GET  /api/status          — aggregated drive status (last run + running flag)
+  ├── GET  /api/drives          — drive paths + health (available before first run)
+  ├── GET  /api/progress        — SSE stream of ProgressEvent during scan/scrub
+  ├── GET  /api/history         — RunRecord[] from each drive's SQLite DB
+  ├── GET  /api/corruption      — runs with files_corrupted > 0
+  ├── GET  /api/compare?a=&b=   — delta between two run IDs
+  ├── GET  /api/export          — download run history (format=json|csv)
+  ├── GET  /api/config          — full config (secrets redacted)
+  ├── POST /api/config          — patch runtime-mutable config keys → saved to YAML
+  ├── GET  /api/settings        — disk thresholds + notification rules
+  ├── POST /api/settings        — update thresholds + notifications
+  ├── GET  /api/schedule        — schedule entries
+  ├── POST /api/schedule        — upsert a schedule entry
+  ├── POST /api/sync            — trigger sync (all drives)
+  ├── POST /api/scrub           — trigger scrub (all drives)
   ├── POST /api/drives/{idx}/sync  — per-drive sync
   └── POST /api/drives/{idx}/scrub — per-drive scrub
 ```
 
 ---
 
-## Bug fixes (blocking)
+## Card layout
 
-### 1. `ProgressEvent` field mismatch
-**Symptom**: progress bar never renders during scans.
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  App header  🔍 Bit Rot Detector  [v]  ● status dot                │
+└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────┐  ┌──────────────────┐  ┌───────────────────────┐
+│  Run Card        │  │  History Card    │  │  Settings Card        │
+│  ● status dot    │  │  42 Runs         │  │  Next run: @daily     │
+│  3 Drives        │  │  [spark chart]   │  │  Notify: corruption   │
+│  1,234 Scanned   │  │  Last corruption:│  │  Disk: warn 75% err   │
+│  Last run: 2h ago│  │  never           │  │  90%                  │
+└──────────────────┘  └──────────────────┘  └───────────────────────┘
 
-Backend (`domain.ProgressEvent`) emits:
+When a card is clicked it expands inline to span the full grid width:
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  Run Card (expanded)                                            [✕] │
+│  [⟳ Sync All] [🔬 Scrub All] [↓ CSV] [↓ JSON]                     │
+│  ── Progress ───────────────────────────────────────────────────── │
+│  Walk → [▒▒▒▒▒▒▒░░░░░] indeterminate      500 found               │
+│  Hash → [▓▓▓▓▓░░░░░░░] 50%          500 / 1000 · 50.0%            │
+│  ── Drives (2) ─────────────────────────────────────────────────── │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ ● Movies  /mnt/movies  Free: 1.2 TB          [Sync] [Scrub]  │  │
+│  │ [used: ▓▓▓▓░░░░░░░░] 60%  3.0 TB / 5.0 TB (60.0%)          │  │
+│  │ Scanned:1234  Added:5  Modified:0  Removed:0  Corrupted:0    │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────┐  ┌─────────────────────────────────────────────┐
+│  History (coll.) │  │  Settings (collapsed)                        │
+└──────────────────┘  └─────────────────────────────────────────────┘
+```
+
+---
+
+## Progress event protocol
+
+The backend (`domain.ProgressEvent`) emits events during sync and scrub:
+
 ```json
 { "phase": "walk|hash|scrub|done", "drive": "Movies", "count": 250, "total": 0 }
 ```
-Frontend `ProgressEvent` interface incorrectly expects `type`, `path`, `pct`, `done`.
 
-**Fix**: update `api.ts`, `sse.ts`, and `RunCard.tsx` to use `phase`/`drive`/`count`/`total`.
+| Phase   | `count`               | `total`                | UI behaviour                                |
+| ------- | --------------------- | ---------------------- | ------------------------------------------- |
+| `walk`  | Files discovered so far | 0 → finalCount (last event) | Indeterminate shimmer + "N found" right |
+| `hash`  | Files hashed so far   | Walk total (set in fix) | Determinate bar + "N / Total · X%" right   |
+| `scrub` | Files verified        | Files selected for scrub | Determinate bar (green) + "N / Total · X%" |
+| `done`  | Final count           | Final total             | Clear progress entry; refresh history + status |
 
-Progress UX per phase:
-| Phase   | Left label         | Right label          | Bar?                  |
-| ------- | ------------------ | -------------------- | --------------------- |
-| `walk`  | Walk — discovering | `count` files        | Indeterminate (pulse) |
-| `hash`  | Hash — scanning    | `count` / walk total | % of discovered files |
-| `scrub` | Scrub — verifying  | `count` / `total`    | % of files to scrub   |
-| `done`  | — clear progress — | –                    | –                     |
-
-Walk total is not known upfront; store the last `walk` count as `discoveredTotal` in state to use as the denominator during the `hash` phase.
-
-### 2. `RunRecord` field mismatch
-**Symptom**: History card shows empty/NaN values; sorting is broken.
-
-Backend JSON:
-```json
-{ "id": 42, "drive_name": "Movies", "files_scanned": 1000, "files_added": 5, ... }
-```
-Frontend interface used: `id: string`, `drive`, `scanned`, `added`, etc.
-
-**Fix**: update `RunRecord` in `api.ts` and all usages in `HistoryCard.tsx`.
-
-### 3. `DriveHealth` object vs string
-**Symptom**: `drive.health === 'error'` is always false; health dot is always "ok".
-
-Backend sends `health` as `DriveHealth` object `{ total_space, used_space, free_space, smart_status }`.
-Frontend treats it as a string.
-
-**Fix**: add `DriveHealth` interface to `api.ts`, update `DriveStatus`. Compute health string from percentage:
-```ts
-usedPct = health.used_space / health.total_space * 100
-errPct  → from settings (default 90)
-warnPct → from settings (default 75)
-```
-
-### 4. `SyncResult` / `ScrubResult` field prefixes
-**Symptom**: all sync/scrub stat boxes show 0.
-
-Backend: `files_scanned`, `files_added`, etc. (prefixed).  
-Frontend `SyncScrubResult` used: `scanned`, `added`, etc.
-
-**Fix**: update both interfaces and all consumers in `RunCard.tsx`.
-
-### 5. `CorruptionEntry` shape mismatch
-**Symptom**: history card corruption panel either crashes or shows blanks.
-
-Backend returns a `CorruptionEvent` (run summary): `drive_name`, `started_at`, `files_corrupted`, `run_id`.  
-Frontend expected file-level detail: `path`, `detected_at`, `hash_expected`, `hash_actual` — which the backend never provides.
-
-**Fix**: update `CorruptionEntry` interface to match actual backend shape; update corruption table columns.
-
-### 6. `CompareResponse` field names
-**Symptom**: compare modal crashes/shows blanks.
-
-Backend response: `{ "run_a": {...}, "run_b": {...}, "delta": { "files_added": N, ... } }`.  
-Frontend expects `a`, `b`, and `delta.added`, `delta.scanned`, etc.
-
-**Fix**: update `CompareResponse` interface; update modal rendering.
-
-### 7. `RunRecord.id` type: string → number
-**Symptom**: compare selection / API calls silently broken.
-
-Backend: `id` is `int64`. Frontend signature uses `string`.
-
-**Fix**: change to `number`.
-
-### 8. `make dev` target missing
-**Symptom**: `make dev` exits with code 2.
-
-**Fix**: add `run` and `dev` targets to `Makefile`.
+Walk events are emitted every 250 files **plus** a final event after `WalkDir` finishes (so even small directories with < 250 files get a walk-total event used as the hash denominator).
 
 ---
 
-## Feature: In-place card expansion
+## Bug fixes (completed this session)
 
-### Current behaviour
-Cards use `position: fixed; inset: 1rem` + semi-transparent overlay + blur on other cards.
-This is a *popup/modal*, not a physical card expansion.
+### ✅ 1. HistoryCard auto-refresh
+**Symptom**: After a scan completes, History card showed stale data until the user manually clicked ↺ Refresh.
 
-### Target behaviour
-- Cards **stay in the CSS grid flow**.
-- Expanding a card applies `grid-column: 1 / -1`, causing it to span the full row width.
-- Other cards reflow naturally below (no blur, no overlay).
-- The expansion is animated with `@keyframes cardExpand` (scale + opacity from-top).
-- Collapsing is the reverse (`@keyframes cardCollapse`), implemented by briefly adding a `.collapsing` class before removing `.expanded` in React.
+**Root cause**: No refresh callback was wired from the SSE `done` handler to `HistoryCard`.
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Run Card (expanded, spans full width)               │
-│  Live progress bars, drive rows, toolbar             │
-└──────────────────────────────────────────────────────┘
-┌────────────────────┐  ┌─────────────────────────────┐
-│  History Card      │  │  Settings Card              │
-│  (collapsed)       │  │  (collapsed)                │
-└────────────────────┘  └─────────────────────────────┘
-```
+**Fix** (`App.tsx` + `HistoryCard.tsx`):
+- Added `historyRefreshRef` to `App.tsx`.
+- `onRunDone` now calls `runRefreshRef.current()` + `historyRefreshRef.current()`.
+- `HistoryCard` accepts `registerRefresh` prop, calls `load()` on expand.
 
-**CSS changes:**
-- Remove `.card-overlay`, `.card-grid.has-expanded`, and the blur filter rules.
-- `.card.expanded` becomes `grid-column: 1 / -1` + `animation: cardExpand`.  
-- `.card.collapsing` has `animation: cardCollapse` and pointer-events none.
+### ✅ 2. Collapse animation missing
+**Symptom**: Collapsing a card was instantaneous (no animation).
 
-**React changes:**
-- Remove the overlay `<div>` from `App.tsx`.
-- Remove `has-expanded` class toggle.
-- Add a `collapsing` CSS class transition before state removal.
+**Fix** (`App.tsx` + `cards.css`):
+- Added `@keyframes cardCollapse` CSS.
+- `App.tsx` sets a `collapsing` state flag for 260 ms before clearing `expanded`.
+
+### ✅ 3. Progress bar denominator (hash phase)
+**Symptom**: Hash progress bar showed indeterminate for directories with < 250 files (no walk events were emitted). For larger directories the denominator was the last walk count emitted, not the actual file total.
+
+**Fix** (`internal/scanner/scanner.go`):
+- Emit a final walk event after `WalkDir` finishes with the complete file count.
+- Hash events now include `Total: walkTotal` for accurate progress percentages.
 
 ---
 
-## Feature: Drives visible on page load
+## Phased delivery status
 
-### Current behaviour
-The drive list in RunCard is empty until a scan completes, because `GET /api/status` returns `drives: []` on first start.
+### ✅ Phase 0 — Config Architecture
+- [x] `gopkg.in/yaml.v3` dependency
+- [x] `config.Load(path)` / `config.Save(cfg, path)` / `config.Store`
+- [x] `POST /api/config` merges & persists mutable key patches
+- [x] `internal/settings` merged into `internal/config`
+- [x] Schedule entries in `config.Schedule`
+- [x] `.env.example` trimmed to secrets only
+- [x] `config.yaml.example` with all non-secret keys
 
-### Target behaviour
-`GET /api/drives` is called immediately on page load. It always returns `paths: []string` (the configured paths from `config.yaml`) even before any run completes. Drive rows are rendered using this path list, with stats showing `—` until a run provides them.
+### ✅ Phase 1 — Foundation
+- [x] `web/` scaffold: Vite 5 + React 18 + TypeScript 5 + Chart.js
+- [x] `vite.config.ts`: output to `internal/api/static/`, `/api` proxy in dev
+- [x] Makefile: `ui`, `ui-dev`, `build-go`, `clean-ui` targets
+- [x] Dockerfile: three-stage build (ui-builder → go-builder → scratch)
+- [x] Card shell with physical in-place expand/collapse (grid-column: 1/-1)
+- [x] Expand animation (`cardExpand`) + collapse animation (`cardCollapse`)
+- [x] SSE `done` event + 30 s status poll auto-refresh both Run and History
 
-**Implementation:**
-1. In `App.tsx`, call `api.getDrives()` alongside `api.getStatus()` on mount.
-2. Pass a `drives` prop to `RunCard` (the raw `DrivesResponse`).
-3. In `RunCard`, merge `status.drives` (has stats) with `drives.paths` (always has paths) so that drives are always shown.
+### ✅ Phase 2 — Run Card
+- [x] Drive grid eagerly populated from `GET /api/drives` on page load
+- [x] Live SSE progress bars: Walk (indeterminate + count), Hash (% bar + count/total), Scrub (green % bar)
+- [x] Per-drive disk usage bar (colour: normal / warn / err based on thresholds)
+- [x] Per-drive Sync / Scrub buttons
+- [x] Sync All / Scrub All / Export CSV / Export JSON toolbar
+- [x] Failures panel for drives with errors
 
----
+### ✅ Phase 3 — History Card
+- [x] Run history table (sortable by any column, most-recent first default)
+- [x] Auto-refresh after SSE `done` event
+- [x] Reload when card is expanded (always fresh data)
+- [x] Multi-select two rows → Compare modal with delta table + duration
+- [x] Corruption events panel (sorted newest-first, shown prominently in red)
+- [x] Spark line chart (collapsed view, files_corrupted trend)
+- [x] Export CSV / JSON buttons in toolbar
 
-## Feature: Config editor in Settings card
+### ✅ Phase 4 — Settings Card
+- [x] Disk threshold form (warn %, error %)
+- [x] Notification rule checkboxes (on_corruption, on_error, on_warn, on_completion)
+- [x] Test Email button
+- [x] Schedule table with inline editing (label, cron_expr, enabled toggle)
+- [x] Config editor: Scrub %, Scrub Frequency, Max Workers, Log Level, Log Retention
+- [x] SMTP settings (host, port, sender, recipient — non-secret only)
+- [x] Save Config → `POST /api/config` → persisted to `config.yaml`
 
-### Target behaviour
-The expanded Settings card shows a **Config** section below Schedule with:
-- One row per config key: key name, current value, editable input, source badge (`yaml` / `env` / `default`), mutability badge (`editable` / `read-only`).
-- A **Save Config** button that calls `POST /api/config`.
-- Read-only fields (e.g. `target_paths`, SMTP secrets) are shown but their inputs are disabled.
-
-**Editable keys (sent via POST /api/config):**
-| Key                  | Type    | Notes                       |
-| -------------------- | ------- | --------------------------- |
-| `scrub_percentage`   | float   | 0.1–100.0                   |
-| `scrub_frequency`    | enum    | daily / weekly / monthly    |
-| `max_workers`        | integer | 1–32                        |
-| `log_level`          | enum    | DEBUG / INFO / WARN / ERROR |
-| `log_retention_days` | integer | ≥1                          |
-| `smtp.host`          | string  |                             |
-| `smtp.port`          | integer |                             |
-| `smtp.sender`        | string  |                             |
-| `smtp.recipient`     | string  |                             |
-
-**Read-only keys (displayed, not editable):**
-| Key             | Reason                                        |
-| --------------- | --------------------------------------------- |
-| `target_paths`  | Requires restart; file-path validation needed |
-| `smtp.username` | Secret — env var only                         |
-| `smtp.password` | Secret — env var only                         |
-
----
-
-## Phased delivery
-
-### ✅ Phase 0 — Config Architecture  
-- [x] `gopkg.in/yaml.v3` dependency  
-- [x] `config.Load` / `config.Save` / `config.Store`  
-- [x] `POST /api/config` applies mutable key patches  
-
-### 🔧 Phase 1 — Foundations + Bug Fixes (current focus)
-- [ ] Fix all 7 type mismatches listed above  
-- [ ] Fix `make dev` target  
-- [ ] In-place card expansion (replace popup with physical expand)  
-- [ ] Eager drive discovery on page load  
-
-### 📊 Phase 2 — Run Card (polish)
-- [ ] Walk/Hash/Scrub phase labels in progress section  
-- [ ] Discovered-files counter shown on right during walk/hash  
-- [ ] Per-drive disk-usage bar (used % of total)  
-- [ ] Drive detail: total_space / free_space displayed  
-
-### 📋 Phase 3 — History Card (polish)
-- [ ] Auto-refresh on SSE `done` event (currently missing)  
-- [ ] Corruption table shows correct fields (drive_name, started_at, files_corrupted)  
-- [ ] Compare modal uses corrected field names  
-- [ ] Sparkline in collapsed view  
-
-### ⚙️  Phase 4 — Settings Card
-- [ ] Config editor section (GET + POST /api/config)  
-- [ ] Schedule CRUD (add new entry, delete entry)  
-- [ ] Thresholds applied to health-dot computation client-side  
-
-### 🎨 Phase 5 — Polish & Docs
-- [ ] Responsive grid: 3 → 2 → 1 columns  
-- [ ] Keyboard navigation: Escape collapses, Tab moves between cards  
-- [ ] Disk-usage bar colours respect configured thresholds  
-- [ ] Update `docs/ui.md`, `docs/api.md`, `docs/architecture.md`  
-- [ ] Integration tests for `/api/config` endpoints  
+### 🔧 Phase 5 — Polish (remaining)
+- [ ] Responsive grid: collapse to 2 → 1 columns on small screens (`@media`)
+- [ ] Add new schedule entry UI (currently only editing existing entries)
+- [ ] Delete schedule entry UI
+- [ ] SMTP credentials: show env-var note (`SMTP_USERNAME`, `SMTP_PASSWORD`)
+- [ ] Disk usage bar colours respect the currently configured threshold values
+- [ ] Per-drive corruption history drill-down (click corrupted count in history table)
+- [ ] Update `docs/api.md` with `/api/config` endpoint details
+- [ ] Update `docs/architecture.md`
 
 ---
 
-## Open questions / decisions needed
+## Open questions
 
-| #   | Question                                                                                      | Default assumption                             |
-| --- | --------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| 1   | Should `target_paths` be editable from the UI (requires restart)?                             | No — show read-only, add a note                |
-| 2   | Should collapse animate (reverse scale) or be instant?                                        | Instant for now (CSS only, no JS delay needed) |
-| 3   | Should the sparkline in HistoryCard collapsed view show `files_scanned` or `files_corrupted`? | `files_corrupted` (more actionable)            |
-| 4   | Dark theme only or add light theme toggle?                                                    | Dark only for now                              |
+| #  | Question                                                          | Current assumption                    |
+| -- | ----------------------------------------------------------------- | ------------------------------------- |
+| 1  | Should `target_paths` be editable (requires restart)?             | No — shown read-only with explanation |
+| 2  | Light theme toggle?                                               | Dark only for now                     |
+| 3  | Per-drive history vs. combined history?                           | Combined (all drives in one table)    |
+| 4  | Add/delete schedule entries from UI?                              | Add/delete planned for Phase 5        |

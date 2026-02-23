@@ -3,11 +3,12 @@ import { api, type SettingsResponse, type ScheduleEntry, type ConfigResponse } f
 
 interface Props {
   expanded: boolean
+  collapsing?: boolean
   onExpand: () => void
   onCollapse: () => void
 }
 
-export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) {
+export default function SettingsCard({ expanded, collapsing, onExpand, onCollapse }: Props) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -26,8 +27,8 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
   const [errorPct, setErrorPct] = useState(90)
   const [notifyCorruption, setNotifyCorruption] = useState(true)
   const [notifyError, setNotifyError] = useState(true)
-  const [notifyWarn, setNotifyWarn] = useState(false)
-  const [notifyCompletion, setNotifyCompletion] = useState(false)
+  const [notifyWarning, setNotifyWarning] = useState(false)
+  const [notifySuccess, setNotifySuccess] = useState(false)
   const [scheduleEdits, setScheduleEdits] = useState<Record<string, ScheduleEntry>>({})
 
   const load = useCallback(() => {
@@ -40,8 +41,8 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
         setErrorPct(s.disk_thresholds.error_pct)
         setNotifyCorruption(s.notification_rules.on_corruption)
         setNotifyError(s.notification_rules.on_error)
-        setNotifyWarn(s.notification_rules.on_warn)
-        setNotifyCompletion(s.notification_rules.on_completion)
+        setNotifyWarning(s.notification_rules.on_warning)
+        setNotifySuccess(s.notification_rules.on_success)
       })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
@@ -86,8 +87,8 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
         notification_rules: {
           on_corruption: notifyCorruption,
           on_error: notifyError,
-          on_warn: notifyWarn,
-          on_completion: notifyCompletion,
+          on_warning: notifyWarning,
+          on_success: notifySuccess,
         },
       })
       setSettings(updated)
@@ -123,8 +124,8 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
   const notifyOn = [
     settings?.notification_rules.on_corruption && 'corruption',
     settings?.notification_rules.on_error && 'error',
-    settings?.notification_rules.on_warn && 'warn',
-    settings?.notification_rules.on_completion && 'completion',
+    settings?.notification_rules.on_warning && 'warning',
+    settings?.notification_rules.on_success && 'success',
   ].filter(Boolean).join(', ') || 'none'
 
   function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -138,8 +139,8 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
 
   return (
     <div
-      className={`card${expanded ? ' expanded' : ''}`}
-      onClick={!expanded ? onExpand : undefined}
+      className={['card', expanded ? 'expanded' : '', collapsing ? 'collapsing' : ''].filter(Boolean).join(' ')}
+      onClick={!expanded && !collapsing ? onExpand : undefined}
     >
       <div className="card-header">
         <span className="card-title">Settings</span>
@@ -191,8 +192,8 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
             {[
               { label: 'On Corruption', val: notifyCorruption, set: setNotifyCorruption },
               { label: 'On Error',      val: notifyError,      set: setNotifyError },
-              { label: 'On Warn',       val: notifyWarn,       set: setNotifyWarn },
-              { label: 'On Completion', val: notifyCompletion, set: setNotifyCompletion },
+              { label: 'On Warning',    val: notifyWarning,    set: setNotifyWarning },
+              { label: 'On Success',    val: notifySuccess,    set: setNotifySuccess },
             ].map(({ label, val, set }) => (
               <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.875rem', cursor: 'pointer' }}>
                 <input type="checkbox" checked={val} onChange={e => set(e.target.checked)} />

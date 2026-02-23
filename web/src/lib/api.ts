@@ -100,8 +100,8 @@ export interface DiskThreshold {
 export interface NotificationRule {
   on_corruption: boolean
   on_error: boolean
-  on_warn: boolean
-  on_completion: boolean
+  on_warning: boolean
+  on_success: boolean
 }
 
 export interface SettingsResponse {

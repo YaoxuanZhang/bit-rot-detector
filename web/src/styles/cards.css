@@ -50,6 +50,29 @@
   }
 }
 
+/* ── Collapsing card (reverse animation before removing .expanded) ── */
+
+.card.collapsing {
+  grid-column: 1 / -1;
+  cursor: default;
+  overflow-y: hidden;
+  animation: cardCollapse 0.24s cubic-bezier(0.55, 0, 0.55, 0.2) forwards;
+  pointer-events: none;
+}
+
+@keyframes cardCollapse {
+  from {
+    opacity: 1;
+    transform: scaleY(1);
+    transform-origin: top center;
+  }
+  to {
+    opacity: 0.6;
+    transform: scaleY(0.96);
+    transform-origin: top center;
+  }
+}
+
 /* ── Card header ────────────────────────────────────────────── */
 .card-header {
   display: flex;

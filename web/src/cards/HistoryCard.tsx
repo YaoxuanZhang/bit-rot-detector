@@ -7,13 +7,15 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 
 interface Props {
   expanded: boolean
+  collapsing?: boolean
   onExpand: () => void
   onCollapse: () => void
+  registerRefresh?: (fn: () => void) => void
 }
 
 type SortKey = 'started_at' | 'drive_name' | 'duration_ms' | 'files_scanned' | 'files_added' | 'files_modified' | 'files_removed' | 'files_validated' | 'files_corrupted'
 
-export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
+export default function HistoryCard({ expanded, collapsing, onExpand, onCollapse, registerRefresh }: Props) {
   const [history, setHistory] = useState<RunRecord[]>([])
   const [corruption, setCorruption] = useState<CorruptionEvent[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -33,24 +35,41 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
       .finally(() => setLoading(false))
   }, [])
 
+  // Initial load
   useEffect(() => { load() }, [load])
 
-  // Draw spark chart
+  // Register with parent so runs trigger a refresh
+  useEffect(() => {
+    registerRefresh?.(load)
+  }, [registerRefresh, load])
+
+  // Reload whenever the card is expanded so the user always sees fresh data
+  const wasExpanded = useRef(false)
+  useEffect(() => {
+    if (expanded && !wasExpanded.current) {
+      load()
+    }
+    wasExpanded.current = expanded
+  }, [expanded, load])
+
+  // Draw spark chart (collapsed view — files_corrupted trend)
   useEffect(() => {
     if (!sparkRef.current || history.length === 0) return
     const ctx = sparkRef.current.getContext('2d')
     if (!ctx) return
     chartRef.current?.destroy()
-    const labels = history.slice(-20).map(r => r.started_at.slice(0, 10))
-    const data = history.slice(-20).map(r => r.files_added)
+    const slice = history.slice(-20)
+    const labels = slice.map(r => r.started_at.slice(0, 10))
+    const data = slice.map(r => r.files_corrupted)
+    const hasCorruption = data.some(v => v > 0)
     chartRef.current = new Chart(ctx, {
       type: 'line',
       data: {
         labels,
         datasets: [{
           data,
-          borderColor: '#6366f1',
-          backgroundColor: 'rgba(99,102,241,0.15)',
+          borderColor: hasCorruption ? '#ef4444' : '#6366f1',
+          backgroundColor: hasCorruption ? 'rgba(239,68,68,0.15)' : 'rgba(99,102,241,0.15)',
           fill: true,
           tension: 0.4,
           pointRadius: 2,
@@ -63,7 +82,7 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
         scales: {
           x: { display: false },
-          y: { display: false },
+          y: { display: false, beginAtZero: true },
         },
       },
     })
@@ -112,10 +131,12 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
     )
   }
 
+  const cardClass = ['card', expanded ? 'expanded' : '', collapsing ? 'collapsing' : ''].filter(Boolean).join(' ')
+
   return (
     <div
-      className={`card${expanded ? ' expanded' : ''}`}
-      onClick={!expanded ? onExpand : undefined}
+      className={cardClass}
+      onClick={!expanded && !collapsing ? onExpand : undefined}
     >
       <div className="card-header">
         <span className="card-title">History</span>
@@ -132,6 +153,12 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
               <span className="summary-val">{history.length}</span>
               <span className="summary-lbl">Runs</span>
             </div>
+            {corruption.length > 0 && (
+              <div className="summary-item">
+                <span className="summary-val" style={{ color: 'var(--err)' }}>{corruption.length}</span>
+                <span className="summary-lbl">Corruptions</span>
+              </div>
+            )}
           </div>
           <div className="spark-wrap">
             <canvas ref={sparkRef} style={{ width: '100%', height: '40px' }} />
@@ -143,30 +170,68 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
       ) : (
         /* ── Expanded view ── */
         <div onClick={e => e.stopPropagation()}>
-          {error && <div className="alert err">{error}</div>}
+          {error && <div className="alert err">{error}<button className="sm" style={{ marginLeft: '0.5rem' }} onClick={() => setError('')}>✕</button></div>}
 
           <div className="toolbar">
             <button onClick={load} disabled={loading}>↺ Refresh</button>
             {selected.size === 2 && (
-              <button className="primary" onClick={runCompare}>⇄ Compare</button>
+              <button className="primary" onClick={runCompare}>⇄ Compare selected runs</button>
             )}
             {selected.size > 0 && (
               <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                {selected.size}/2 selected
+                {selected.size}/2 selected for compare
               </span>
             )}
+            <span style={{ flex: 1 }} />
+            <a href={api.exportUrl('csv')} download="bitrot-history.csv">
+              <button className="sm">↓ CSV</button>
+            </a>
+            <a href={api.exportUrl('json')} download="bitrot-history.json">
+              <button className="sm">↓ JSON</button>
+            </a>
           </div>
+
+          {/* Corruption events summary (shown prominently if any) */}
+          {corruption.length > 0 && (
+            <>
+              <div className="section-title" style={{ color: 'var(--err)' }}>
+                ⚠ Corruption Events ({corruption.length})
+              </div>
+              <div className="tbl-wrap" style={{ marginBottom: '1.5rem' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Drive</th>
+                      <th>Detected</th>
+                      <th>Run #</th>
+                      <th>Corrupted Files</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {corruption.slice().sort((a, b) => b.started_at.localeCompare(a.started_at)).map((c, i) => (
+                      <tr key={i}>
+                        <td>{c.drive_name || c.drive_id || '—'}</td>
+                        <td>{formatDate(c.started_at)}</td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>#{c.run_id}</td>
+                        <td className="red">{formatNumber(c.files_corrupted)} file{c.files_corrupted !== 1 ? 's' : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
 
           {/* Run history table */}
           <div className="section-title">Run History ({history.length})</div>
           {loading && <div className="empty">Loading…</div>}
-          {!loading && history.length === 0 && <div className="empty">No runs recorded yet.</div>}
+          {!loading && history.length === 0 && <div className="empty">No runs recorded yet. Run a sync or scrub to see history here.</div>}
           {!loading && history.length > 0 && (
             <div className="tbl-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th />
+                    <th style={{ width: '2rem' }} />
                     <SortTh col="drive_name" label="Drive" />
                     <SortTh col="started_at" label="Started" />
                     <SortTh col="duration_ms" label="Duration" />
@@ -180,13 +245,13 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
                 </thead>
                 <tbody>
                   {sorted.map(r => (
-                    <tr key={r.id} className={selected.has(r.id) ? 'selected' : ''} onClick={() => toggleSelect(r.id)}>
+                    <tr key={r.id} className={selected.has(r.id) ? 'selected' : ''} onClick={() => toggleSelect(r.id)} style={{ cursor: 'pointer' }}>
                       <td>
                         <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} onClick={e => e.stopPropagation()} />
                       </td>
                       <td>{r.drive_name || '—'}</td>
-                      <td>{formatDate(r.started_at)}</td>
-                      <td>{formatDuration(r.duration_ms)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.started_at)}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)' }}>{formatDuration(r.duration_ms)}</td>
                       <td>{formatNumber(r.files_scanned)}</td>
                       <td className={r.files_added > 0 ? 'ok' : ''}>{formatNumber(r.files_added)}</td>
                       <td className={r.files_modified > 0 ? 'warn' : ''}>{formatNumber(r.files_modified)}</td>
@@ -199,37 +264,6 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
               </table>
             </div>
           )}
-
-          {/* Corruption panel */}
-          {corruption.length > 0 && (
-            <>
-              <div className="section-title" style={{ marginTop: '1.5rem' }}>
-                Corruption Events ({corruption.length})
-              </div>
-              <div className="tbl-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Drive</th>
-                      <th>Started</th>
-                      <th>Run</th>
-                      <th>Corrupted Files</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {corruption.map((c, i) => (
-                      <tr key={i}>
-                        <td>{c.drive_name || '—'}</td>
-                        <td>{formatDate(c.started_at)}</td>
-                        <td style={{ fontFamily: 'var(--font-mono)' }}>#{c.run_id}</td>
-                        <td className="red">{formatNumber(c.files_corrupted)} file{c.files_corrupted !== 1 ? 's' : ''}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
         </div>
       )}
 
@@ -238,36 +272,52 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
         <div className="modal-backdrop" onClick={() => setCompareResult(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title">Compare Runs</span>
+              <span className="modal-title">
+                Compare Run #{compareResult.run_a.id} vs #{compareResult.run_b.id}
+              </span>
               <button className="sm" onClick={() => setCompareResult(null)}>✕</button>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '1rem' }}>
+              {compareResult.run_a.drive_name} · {formatDate(compareResult.run_a.started_at)}
+              {' → '}
+              {compareResult.run_b.drive_name} · {formatDate(compareResult.run_b.started_at)}
             </div>
             <div className="tbl-wrap">
               <table>
                 <thead>
                   <tr>
                     <th>Metric</th>
-                    <th>Run A</th>
-                    <th>Run B</th>
-                    <th>Delta</th>
+                    <th>Run A (#{compareResult.run_a.id})</th>
+                    <th>Run B (#{compareResult.run_b.id})</th>
+                    <th>Δ Change</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(['files_added', 'files_modified', 'files_removed', 'files_corrupted'] as const).map(k => {
-                    const label = k.replace('files_', '')
+                    const label = k.replace('files_', '').replace('_', ' ')
                     const delta = compareResult.delta[k] ?? 0
                     const aVal = (compareResult.run_a as unknown as Record<string, number>)[k] ?? 0
                     const bVal = (compareResult.run_b as unknown as Record<string, number>)[k] ?? 0
+                    const isCorruption = k === 'files_corrupted'
                     return (
                       <tr key={k}>
                         <td style={{ textTransform: 'capitalize' }}>{label}</td>
                         <td>{formatNumber(aVal)}</td>
                         <td>{formatNumber(bVal)}</td>
-                        <td className={delta > 0 ? (k === 'files_corrupted' ? 'red' : 'ok') : delta < 0 ? 'warn' : ''}>
+                        <td className={delta > 0 ? (isCorruption ? 'red' : 'ok') : delta < 0 ? 'warn' : ''}>
                           {delta > 0 ? '+' : ''}{formatNumber(delta)}
                         </td>
                       </tr>
                     )
                   })}
+                  <tr>
+                    <td>Duration</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{formatDuration(compareResult.run_a.duration_ms)}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{formatDuration(compareResult.run_b.duration_ms)}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)', color: compareResult.delta.duration_ms > 0 ? 'var(--warn)' : 'var(--ok)' }}>
+                      {compareResult.delta.duration_ms > 0 ? '+' : ''}{formatDuration(Math.abs(compareResult.delta.duration_ms))}
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
