@@ -5,7 +5,10 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: '../internal/api/static',
-    emptyOutDir: false,
+    // Clean old hashed bundles before each build so stale files don't
+    // accumulate in the committed static/ tree.  Vite requires explicit
+    // opt-in when outDir lives outside the project root.
+    emptyOutDir: true,
   },
   server: {
     proxy: {
