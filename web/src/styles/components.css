@@ -115,6 +115,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .progress-bar.warn { background: var(--warn); }
 .progress-bar.err  { background: var(--err); }
 
+/* Walk phase: indeterminate shimmer */
+.progress-bar.indeterminate {
+  width: 40%;
+  animation: progressSlide 1.4s ease-in-out infinite;
+}
+@keyframes progressSlide {
+  0%   { transform: translateX(-150%); }
+  100% { transform: translateX(350%); }
+}
+
 /* ── Tables ──────────────────────────────────────────────────── */
 .tbl-wrap {
   overflow-x: auto;

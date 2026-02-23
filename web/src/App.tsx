@@ -56,13 +56,11 @@ export default function App() {
   const globalHealth = status
     ? status.running
       ? 'running'
-      : status.drives.some(d => d.health === 'error' || d.err)
+      : status.drives.some(d => d.err)
         ? 'err'
-        : status.drives.some(d => d.health === 'warn')
-          ? 'warn'
-          : status.drives.length > 0
-            ? 'ok'
-            : 'idle'
+        : status.drives.length > 0
+          ? 'ok'
+          : 'idle'
     : 'idle'
 
   return (
@@ -74,11 +72,7 @@ export default function App() {
         <span className={`status-dot ${globalHealth}`} title={globalHealth} />
       </header>
 
-      {expanded && (
-        <div className="card-overlay" onClick={collapse} />
-      )}
-
-      <div className={`card-grid${expanded ? ' has-expanded' : ''}`}>
+      <div className="card-grid">
         <RunCard
           status={status}
           expanded={expanded === 'run'}

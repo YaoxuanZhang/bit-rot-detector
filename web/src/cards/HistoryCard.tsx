@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { api, type RunRecord, type CorruptionEntry, type CompareResponse } from '../lib/api'
+import { api, type RunRecord, type CorruptionEvent, type CompareResponse } from '../lib/api'
 import { formatDate, formatDuration, formatNumber } from '../lib/format'
 import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler } from 'chart.js'
 
@@ -11,12 +11,12 @@ interface Props {
   onCollapse: () => void
 }
 
-type SortKey = 'started_at' | 'drive' | 'duration_ms' | 'scanned' | 'added' | 'modified' | 'removed' | 'validated' | 'corrupted'
+type SortKey = 'started_at' | 'drive_name' | 'duration_ms' | 'files_scanned' | 'files_added' | 'files_modified' | 'files_removed' | 'files_validated' | 'files_corrupted'
 
 export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
   const [history, setHistory] = useState<RunRecord[]>([])
-  const [corruption, setCorruption] = useState<CorruptionEntry[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [corruption, setCorruption] = useState<CorruptionEvent[]>([])
+  const [selected, setSelected] = useState<Set<number>>(new Set())
   const [compareResult, setCompareResult] = useState<CompareResponse | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('started_at')
   const [sortAsc, setSortAsc] = useState(false)
@@ -42,7 +42,7 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
     if (!ctx) return
     chartRef.current?.destroy()
     const labels = history.slice(-20).map(r => r.started_at.slice(0, 10))
-    const data = history.slice(-20).map(r => r.added)
+    const data = history.slice(-20).map(r => r.files_added)
     chartRef.current = new Chart(ctx, {
       type: 'line',
       data: {
@@ -71,7 +71,7 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
   }, [history])
 
   const lastCorruption = corruption.length > 0
-    ? corruption.sort((a, b) => b.detected_at.localeCompare(a.detected_at))[0].detected_at
+    ? corruption.slice().sort((a, b) => b.started_at.localeCompare(a.started_at))[0].started_at
     : null
 
   function toggleSort(key: SortKey) {
@@ -86,7 +86,7 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
     return sortAsc ? cmp : -cmp
   })
 
-  function toggleSelect(id: string) {
+  function toggleSelect(id: number) {
     setSelected(s => {
       const next = new Set(s)
       if (next.has(id)) next.delete(id)
@@ -116,11 +116,12 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
     <div
       className={`card${expanded ? ' expanded' : ''}`}
       onClick={!expanded ? onExpand : undefined}
-      onContextMenu={e => { if (expanded) { e.preventDefault(); onCollapse() } }}
     >
       <div className="card-header">
         <span className="card-title">History</span>
-        <button className="card-close-btn" onClick={e => { e.stopPropagation(); onCollapse() }} title="Collapse (Esc)">✕</button>
+        {expanded && (
+          <button className="card-close-btn" onClick={e => { e.stopPropagation(); onCollapse() }} title="Collapse (Esc)">✕</button>
+        )}
       </div>
 
       {!expanded ? (
@@ -166,15 +167,15 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
                 <thead>
                   <tr>
                     <th />
-                    <SortTh col="drive" label="Drive" />
+                    <SortTh col="drive_name" label="Drive" />
                     <SortTh col="started_at" label="Started" />
                     <SortTh col="duration_ms" label="Duration" />
-                    <SortTh col="scanned" label="Scanned" />
-                    <SortTh col="added" label="Added" />
-                    <SortTh col="modified" label="Modified" />
-                    <SortTh col="removed" label="Removed" />
-                    <SortTh col="validated" label="Validated" />
-                    <SortTh col="corrupted" label="Corrupted" />
+                    <SortTh col="files_scanned" label="Scanned" />
+                    <SortTh col="files_added" label="Added" />
+                    <SortTh col="files_modified" label="Modified" />
+                    <SortTh col="files_removed" label="Removed" />
+                    <SortTh col="files_validated" label="Validated" />
+                    <SortTh col="files_corrupted" label="Corrupted" />
                   </tr>
                 </thead>
                 <tbody>
@@ -183,15 +184,15 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
                       <td>
                         <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} onClick={e => e.stopPropagation()} />
                       </td>
-                      <td>{r.drive || '—'}</td>
+                      <td>{r.drive_name || '—'}</td>
                       <td>{formatDate(r.started_at)}</td>
                       <td>{formatDuration(r.duration_ms)}</td>
-                      <td>{formatNumber(r.scanned)}</td>
-                      <td className={r.added > 0 ? 'ok' : ''}>{formatNumber(r.added)}</td>
-                      <td className={r.modified > 0 ? 'warn' : ''}>{formatNumber(r.modified)}</td>
-                      <td>{formatNumber(r.removed)}</td>
-                      <td>{formatNumber(r.validated)}</td>
-                      <td className={r.corrupted > 0 ? 'red' : ''}>{formatNumber(r.corrupted)}</td>
+                      <td>{formatNumber(r.files_scanned)}</td>
+                      <td className={r.files_added > 0 ? 'ok' : ''}>{formatNumber(r.files_added)}</td>
+                      <td className={r.files_modified > 0 ? 'warn' : ''}>{formatNumber(r.files_modified)}</td>
+                      <td>{formatNumber(r.files_removed)}</td>
+                      <td>{formatNumber(r.files_validated)}</td>
+                      <td className={r.files_corrupted > 0 ? 'red' : ''}>{formatNumber(r.files_corrupted)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -210,20 +211,18 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
                   <thead>
                     <tr>
                       <th>Drive</th>
-                      <th>Path</th>
-                      <th>Detected</th>
-                      <th>Expected Hash</th>
-                      <th>Actual Hash</th>
+                      <th>Started</th>
+                      <th>Run</th>
+                      <th>Corrupted Files</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {corruption.map(c => (
-                      <tr key={c.id}>
-                        <td>{c.drive}</td>
-                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>{c.path}</td>
-                        <td>{formatDate(c.detected_at)}</td>
-                        <td className="red" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>{c.hash_expected?.slice(0, 12)}…</td>
-                        <td className="red" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>{c.hash_actual?.slice(0, 12)}…</td>
+                    {corruption.map((c, i) => (
+                      <tr key={i}>
+                        <td>{c.drive_name || '—'}</td>
+                        <td>{formatDate(c.started_at)}</td>
+                        <td style={{ fontFamily: 'var(--font-mono)' }}>#{c.run_id}</td>
+                        <td className="red">{formatNumber(c.files_corrupted)} file{c.files_corrupted !== 1 ? 's' : ''}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -253,14 +252,17 @@ export default function HistoryCard({ expanded, onExpand, onCollapse }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {(['scanned', 'added', 'modified', 'removed', 'validated', 'corrupted'] as const).map(k => {
-                    const delta = compareResult.delta[k]
+                  {(['files_added', 'files_modified', 'files_removed', 'files_corrupted'] as const).map(k => {
+                    const label = k.replace('files_', '')
+                    const delta = compareResult.delta[k] ?? 0
+                    const aVal = (compareResult.run_a as unknown as Record<string, number>)[k] ?? 0
+                    const bVal = (compareResult.run_b as unknown as Record<string, number>)[k] ?? 0
                     return (
                       <tr key={k}>
-                        <td style={{ textTransform: 'capitalize' }}>{k}</td>
-                        <td>{formatNumber(compareResult.a[k])}</td>
-                        <td>{formatNumber(compareResult.b[k])}</td>
-                        <td className={delta > 0 ? (k === 'corrupted' ? 'red' : 'ok') : delta < 0 ? 'warn' : ''}>
+                        <td style={{ textTransform: 'capitalize' }}>{label}</td>
+                        <td>{formatNumber(aVal)}</td>
+                        <td>{formatNumber(bVal)}</td>
+                        <td className={delta > 0 ? (k === 'files_corrupted' ? 'red' : 'ok') : delta < 0 ? 'warn' : ''}>
                           {delta > 0 ? '+' : ''}{formatNumber(delta)}
                         </td>
                       </tr>

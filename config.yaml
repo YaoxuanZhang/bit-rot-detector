@@ -1,0 +1,21 @@
+target_paths:
+    - ./
+smtp:
+    host: mail.smtp2go.com
+    port: 587
+    sender: ""
+    recipient: ""
+scrub_percentage: 1
+scrub_frequency: daily
+max_workers: 4
+log_level: INFO
+log_retention_days: 7
+disk_thresholds:
+    warn_pct: 75
+    error_pct: 90
+notification_rules:
+    on_success: false
+    on_warning: false
+    on_corruption: true
+    on_error: true
+schedule: []

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { api, type SettingsResponse, type ScheduleEntry } from '../lib/api'
+import { api, type SettingsResponse, type ScheduleEntry, type ConfigResponse } from '../lib/api'
 
 interface Props {
   expanded: boolean
@@ -14,6 +14,12 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState('')
   const [error, setError] = useState('')
+
+  // Config editor state
+  const [config, setConfig] = useState<ConfigResponse | null>(null)
+  const [configEdits, setConfigEdits] = useState<Partial<ConfigResponse>>({})
+  const [configSaving, setConfigSaving] = useState(false)
+  const [configSaved, setConfigSaved] = useState(false)
 
   // local form states
   const [warnPct, setWarnPct] = useState(80)
@@ -42,6 +48,13 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
   }, [])
 
   useEffect(() => { if (expanded) load() }, [expanded, load])
+
+  // Load config when expanded
+  useEffect(() => {
+    if (expanded) {
+      api.getConfig().then(c => { setConfig(c); setConfigEdits({}) }).catch(() => {})
+    }
+  }, [expanded])
 
   // Collapsed: load just enough for summary
   useEffect(() => {
@@ -127,11 +140,12 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
     <div
       className={`card${expanded ? ' expanded' : ''}`}
       onClick={!expanded ? onExpand : undefined}
-      onContextMenu={e => { if (expanded) { e.preventDefault(); onCollapse() } }}
     >
       <div className="card-header">
         <span className="card-title">Settings</span>
-        <button className="card-close-btn" onClick={e => { e.stopPropagation(); onCollapse() }} title="Collapse (Esc)">✕</button>
+        {expanded && (
+          <button className="card-close-btn" onClick={e => { e.stopPropagation(); onCollapse() }} title="Collapse (Esc)">✕</button>
+        )}
       </div>
 
       {!expanded ? (
@@ -242,6 +256,96 @@ export default function SettingsCard({ expanded, onExpand, onCollapse }: Props) 
                 </tbody>
               </table>
             </div>
+          )}
+
+          {/* ── Config editor ── */}
+          <div className="section-title" style={{ marginTop: '1.5rem' }}>Config</div>
+          {!config && <div className="empty">Loading config…</div>}
+          {config && (
+            <>
+              {config.target_paths && config.target_paths.length > 0 && (
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.4rem' }}>Target Paths (read-only)</div>
+                  {config.target_paths.map(p => (
+                    <div key={p} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--text)', marginBottom: '0.2rem' }}>{p}</div>
+                  ))}
+                </div>
+              )}
+              <div className="form-row" style={{ flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                {[{ label: 'Scrub %', key: 'scrub_percentage', type: 'number', min: 0, max: 100, step: 1 },
+                  { label: 'Max Workers', key: 'max_workers', type: 'number', min: 1, max: 64, step: 1 },
+                  { label: 'Log Retention (days)', key: 'log_retention_days', type: 'number', min: 1, max: 365, step: 1 }]
+                  .map(({ label, key, type, min, max, step }) => (
+                    <div key={key} className="form-group">
+                      <label>{label}</label>
+                      <input
+                        type={type}
+                        min={min} max={max} step={step}
+                        value={((configEdits as Record<string, unknown>)[key] ?? (config as Record<string, unknown>)[key] ?? '') as string | number}
+                        onChange={e => setConfigEdits(prev => ({ ...prev, [key]: Number(e.target.value) }))}
+                      />
+                    </div>
+                  ))}
+                <div className="form-group">
+                  <label>Scrub Frequency</label>
+                  <select
+                    value={(configEdits.scrub_frequency ?? config.scrub_frequency) || ''}
+                    onChange={e => setConfigEdits(prev => ({ ...prev, scrub_frequency: e.target.value }))}
+                  >
+                    {['daily', 'weekly', 'monthly'].map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Log Level</label>
+                  <select
+                    value={(configEdits.log_level ?? config.log_level) || ''}
+                    onChange={e => setConfigEdits(prev => ({ ...prev, log_level: e.target.value }))}
+                  >
+                    {['debug', 'info', 'warn', 'error'].map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </div>
+              </div>
+              {/* SMTP (non-secret fields) */}
+              <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.4rem' }}>SMTP</div>
+              <div className="form-row" style={{ flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                {[{ label: 'Host', key: 'host', type: 'text' },
+                  { label: 'Port', key: 'port', type: 'number' },
+                  { label: 'Sender', key: 'sender', type: 'email' },
+                  { label: 'Recipient', key: 'recipient', type: 'email' }]
+                  .map(({ label, key, type }) => (
+                    <div key={key} className="form-group">
+                      <label>{label}</label>
+                      <input
+                        type={type}
+                        value={((configEdits.smtp ?? config.smtp ?? {}) as Record<string, unknown>)[key] as string ?? ''}
+                        onChange={e => setConfigEdits(prev => ({
+                          ...prev,
+                          smtp: { ...config.smtp, ...(prev.smtp ?? {}), [key]: key === 'port' ? Number(e.target.value) : e.target.value } as typeof config.smtp
+                        }))}
+                      />
+                    </div>
+                  ))}
+              </div>
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                <button
+                  className="primary sm"
+                  disabled={configSaving || Object.keys(configEdits).length === 0}
+                  onClick={async () => {
+                    setConfigSaving(true)
+                    setConfigSaved(false)
+                    try {
+                      const updated = await api.postConfig(configEdits)
+                      setConfig(updated)
+                      setConfigEdits({})
+                      setConfigSaved(true)
+                      setTimeout(() => setConfigSaved(false), 3000)
+                    } catch (e) { setError(String(e)) }
+                    finally { setConfigSaving(false) }
+                  }}
+                >Save Config</button>
+                {configSaved && <span style={{ fontSize: '0.8rem', color: 'var(--ok)' }}>✓ Saved</span>}
+              </div>
+            </>
           )}
         </div>
       )}

@@ -1,23 +1,42 @@
 // API types and fetch helpers
+// All types must match backend JSON field names exactly.
 
+// ── Drive health (domain.DriveHealth) ──────────────────────────────────────
+export interface DriveHealth {
+  drive_name: string
+  total_space: number
+  used_space: number
+  free_space: number
+  temperature?: number
+  smart_status?: string
+  smart_errors?: string[]
+  is_rotational: boolean
+}
+
+// ── Scan result types (domain.SyncResult / domain.ScrubResult) ────────────
+export interface SyncResult {
+  files_scanned: number
+  files_added: number
+  files_modified: number
+  files_moved: number
+  files_removed: number
+  errors?: string[]
+}
+
+export interface ScrubResult {
+  files_validated: number
+  files_corrupted?: string[]   // array of file paths
+  errors?: string[]
+}
+
+// ── Per-drive status (api.DriveStatus) ────────────────────────────────────
 export interface DriveStatus {
   drive: string
   path: string
-  health: string
-  sync_result?: SyncScrubResult
-  scrub_result?: SyncScrubResult
+  health?: DriveHealth            // object, absent until first run
+  sync_result?: SyncResult
+  scrub_result?: ScrubResult
   err?: string
-}
-
-export interface SyncScrubResult {
-  scanned: number
-  added: number
-  modified: number
-  removed: number
-  validated: number
-  corrupted: number
-  duration_ms?: number
-  error?: string
 }
 
 export interface StatusResponse {
@@ -27,52 +46,52 @@ export interface StatusResponse {
   drives: DriveStatus[]
 }
 
-export interface DriveEntry {
-  index: number
-  path: string
-  name: string
-}
-
 export interface DrivesResponse {
-  paths: string[]
-  drives: DriveEntry[]
+  paths: string[]               // always populated from config on startup
+  drives: DriveStatus[]         // populated after first run
 }
 
+// ── SSE progress (domain.ProgressEvent) ───────────────────────────────────
+// phase: "walk" | "hash" | "scrub" | "done"
+// count: files processed so far in this phase
+// total: expected total (0 = unknown, e.g. during walk)
 export interface ProgressEvent {
-  type: string
-  path: string
   phase: string
+  drive: string
+  count: number
   total: number
-  done: number
-  pct: number
+  message?: string
 }
 
+// ── Run history (domain.RunRecord) ────────────────────────────────────────
 export interface RunRecord {
-  id: string
+  id: number                  // int64
+  drive_id: string
+  drive_name: string
   started_at: string
-  finished_at: string
   duration_ms: number
-  drive: string
-  path: string
-  scanned: number
-  added: number
-  modified: number
-  removed: number
-  validated: number
-  corrupted: number
-  error?: string
+  files_scanned: number
+  files_added: number
+  files_modified: number
+  files_removed: number
+  files_moved: number
+  files_validated: number
+  files_corrupted: number     // count (not path list)
+  sync_errors: number
+  scrub_errors: number
 }
 
-export interface CorruptionEntry {
-  id: string
-  drive: string
-  path: string
-  detected_at: string
-  hash_expected: string
-  hash_actual: string
-  run_id: string
+// ── Corruption events (api.CorruptionEvent) ────────────────────────────────
+// Each entry is a run summary where files_corrupted > 0.
+export interface CorruptionEvent {
+  drive_id: string
+  drive_name: string
+  started_at: string
+  files_corrupted: number
+  run_id: number
 }
 
+// ── Settings / schedule ───────────────────────────────────────────────────
 export interface DiskThreshold {
   warn_pct: number
   error_pct: number
@@ -97,21 +116,38 @@ export interface ScheduleEntry {
   enabled: boolean
 }
 
+// ── Compare (api.handleCompare) ────────────────────────────────────────────
 export interface CompareResponse {
-  a: RunRecord
-  b: RunRecord
+  run_a: RunRecord
+  run_b: RunRecord
   delta: {
-    scanned: number
-    added: number
-    modified: number
-    removed: number
-    validated: number
-    corrupted: number
+    files_added: number
+    files_modified: number
+    files_removed: number
+    files_corrupted: number
+    duration_ms: number
   }
 }
 
+// ── Config (config.Config) ─────────────────────────────────────────────────
+export interface SmtpConfig {
+  host: string
+  port: number
+  sender: string
+  recipient: string
+  // username / password are secrets; never sent by backend
+}
+
 export interface ConfigResponse {
-  [key: string]: unknown
+  target_paths?: string[]
+  smtp?: SmtpConfig
+  scrub_percentage?: number
+  scrub_frequency?: string
+  max_workers?: number
+  log_level?: string
+  log_retention_days?: number
+  disk_thresholds?: DiskThreshold
+  notification_rules?: NotificationRule
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -131,7 +167,7 @@ export const api = {
   getHistory: (limit = 50) =>
     request<RunRecord[]>(`/api/history?limit=${limit}`),
 
-  getCorruption: () => request<CorruptionEntry[]>('/api/corruption'),
+  getCorruption: () => request<CorruptionEvent[]>('/api/corruption'),
 
   getSettings: () => request<SettingsResponse>('/api/settings'),
 
@@ -175,7 +211,7 @@ export const api = {
   postTestEmail: () =>
     fetch('/api/test-email', { method: 'POST' }),
 
-  compare: (a: string, b: string) =>
+  compare: (a: number, b: number) =>
     request<CompareResponse>(`/api/compare?a=${a}&b=${b}`),
 
   exportUrl: (format: 'json' | 'csv') => `/api/export?format=${format}`,

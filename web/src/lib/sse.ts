@@ -33,7 +33,8 @@ export function useSSE(onEvent: SSEHandler, onDone?: DoneHandler) {
       try {
         const data = JSON.parse(e.data) as ProgressEvent
         onEventRef.current(data)
-        if (data.type === 'done') {
+        // Backend signals completion with phase = "done"
+        if (data.phase === 'done') {
           onDoneRef.current?.()
         }
       } catch {

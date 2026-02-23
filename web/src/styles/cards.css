@@ -27,60 +27,26 @@
 }
 
 /* ── Blurred background cards when one is expanded ─────────── */
-.card-grid.has-expanded .card:not(.expanded) {
-  filter: blur(2px);
-  pointer-events: none;
-  opacity: 0.5;
-  transition: filter 0.25s ease, opacity 0.25s ease;
-}
+/* (removed — inline expansion doesn't blur siblings) */
 
-/* ── Expanded card overlay ─────────────────────────────────── */
-.card-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  z-index: 50;
-  animation: fadeIn 0.2s ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
+/* ── Expanded card (expands inline across full grid width) ─── */
 
 .card.expanded {
-  position: fixed;
-  inset: 1rem;
-  z-index: 100;
+  grid-column: 1 / -1;
   cursor: default;
   overflow-y: auto;
-  box-shadow: var(--shadow);
-  animation: flipExpand 0.25s cubic-bezier(0.22, 0.61, 0.36, 1);
+  animation: cardExpand 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-@keyframes flipExpand {
+@keyframes cardExpand {
   from {
-    transform: var(--flip-from, scale(0.85));
-    opacity: 0.6;
+    opacity: 0.75;
+    transform: scaleY(0.97);
+    transform-origin: top center;
   }
   to {
-    transform: scale(1);
     opacity: 1;
-  }
-}
-
-.card.collapsing {
-  animation: flipCollapse 0.2s cubic-bezier(0.55, 0, 1, 0.45);
-}
-
-@keyframes flipCollapse {
-  from {
-    transform: scale(1);
-    opacity: 1;
-  }
-  to {
-    transform: var(--flip-from, scale(0.85));
-    opacity: 0;
+    transform: scaleY(1);
   }
 }
 
