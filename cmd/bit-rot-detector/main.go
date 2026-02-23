@@ -30,6 +30,9 @@ import (
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/config"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/coordinator"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/mailer"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/retry"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/scheduler"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/settings"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/watcher"
 )
 
@@ -99,7 +102,15 @@ func run() int {
 
 	// ── Web UI mode ───────────────────────────────────────────────────────────
 	if *webMode {
+		settingsStore := settings.New("") // in-memory for now (no file path)
+		schedStore    := scheduler.New("")
+		retryQueue    := retry.New(100)
+
 		srv := api.New(ctx, cfg.TargetPaths, opts)
+		srv.SetMailer(m)
+		srv.WithSettings(settingsStore)
+		srv.WithScheduler(schedStore)
+		srv.WithRetryQueue(retryQueue)
 		slog.Info("starting web UI", "addr", *listenAddr)
 		if err := srv.ListenAndServe(ctx, *listenAddr); err != nil {
 			slog.Error("web server error", "err", err)

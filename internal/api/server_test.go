@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,9 @@ import (
 
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/api"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/coordinator"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/retry"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/scheduler"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/settings"
 )
 
 // newTestServer returns a *Server wired to a real temp directory.
@@ -409,7 +414,533 @@ func TestGetHistory_PopulatedAfterSync(t *testing.T) {
 	}
 }
 
+func TestPostDriveScrub_ValidIdx(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	srv := newTestServer(t, dir)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/drives/0/scrub", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+	pollStatus(t, srv)
+}
+
+func TestPostDriveScrub_InvalidIdx(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, "/api/drives/99/scrub", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestGetSettings_NoStore_ReturnsDefaults(t *testing.T) {
+	// When no settings store is injected, GET /api/settings returns defaults.
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["disk_thresholds"] == nil {
+		t.Error("expected disk_thresholds key in default settings")
+	}
+}
+
+func TestPostSettings_NoStore_Returns503(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(`{}`))
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
+func TestPostSettings_BadJSON_Returns400(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	srv.WithSettings(settings.New(""))
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(`not json`))
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestGetSchedule_NoStore_ReturnsEmpty(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/schedule", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var entries []interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected empty schedule, got %d", len(entries))
+	}
+}
+
+func TestPostSchedule_NoStore_Returns503(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	body := `{"id":"sync","label":"Daily","enabled":true,"cron_expr":"@daily"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/schedule", strings.NewReader(body))
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
+func TestPostSchedule_BadJSON_Returns400(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	srv.WithScheduler(scheduler.New(""))
+	req := httptest.NewRequest(http.MethodPost, "/api/schedule", strings.NewReader(`not json`))
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestGetRetries_NoQueue_ReturnsEmpty(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/retries", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var items []interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty retries, got %d", len(items))
+	}
+}
+
+func TestGetRetries_WithItems(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	q := retry.New(10)
+	q.Add("/data", "sync", "permission denied")
+	srv.WithRetryQueue(q)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/retries", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var items []map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0]["path"] != "/data" {
+		t.Errorf("expected path=/data, got %v", items[0]["path"])
+	}
+}
+
+func TestGetCompare_InvalidA(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/compare?a=notanint&b=2", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestGetCompare_InvalidB(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/compare?a=1&b=notanint", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestGetCompare_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	srv := newTestServer(t, dir)
+
+	// Trigger a sync to create the DB.
+	syncReq := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	syncRR  := httptest.NewRecorder()
+	srv.ServeHTTP(syncRR, syncReq)
+	pollStatus(t, srv)
+
+	// IDs 9999 and 9998 almost certainly do not exist.
+	req := httptest.NewRequest(http.MethodGet, "/api/compare?a=9999&b=9998", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetCompare_TwoRuns(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, dir)
+
+	// Run sync twice to produce two run history records.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+		rr  := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("sync %d: expected 202, got %d", i, rr.Code)
+		}
+		pollStatus(t, srv)
+	}
+
+	// Fetch history to get the two run IDs.
+	histReq := httptest.NewRequest(http.MethodGet, "/api/history?limit=2", nil)
+	histRR  := httptest.NewRecorder()
+	srv.ServeHTTP(histRR, histReq)
+	if histRR.Code != http.StatusOK {
+		t.Fatalf("history: expected 200, got %d", histRR.Code)
+	}
+	var records []map[string]interface{}
+	if err := json.Unmarshal(histRR.Body.Bytes(), &records); err != nil {
+		t.Fatalf("unmarshal history: %v", err)
+	}
+	if len(records) < 2 {
+		t.Skipf("need at least 2 history records; got %d — skipping comparison test", len(records))
+	}
+
+	idA := records[len(records)-1]["id"]
+	idB := records[len(records)-2]["id"]
+
+	// Compare the two runs.
+	url := fmt.Sprintf("/api/compare?a=%v&b=%v", idA, idB)
+	cmpReq := httptest.NewRequest(http.MethodGet, url, nil)
+	cmpRR  := httptest.NewRecorder()
+	srv.ServeHTTP(cmpRR, cmpReq)
+	if cmpRR.Code != http.StatusOK {
+		t.Fatalf("compare: expected 200, got %d: %s", cmpRR.Code, cmpRR.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(cmpRR.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal compare: %v", err)
+	}
+	if resp["run_a"] == nil || resp["run_b"] == nil || resp["delta"] == nil {
+		t.Errorf("expected run_a, run_b, delta keys in response; got: %v", resp)
+	}
+}
+
+func TestGetExport_CSV_EmptyHistory(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/export?format=csv", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	ct := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("expected text/csv Content-Type, got %q", ct)
+	}
+}
+
 func min(a, b int) int {
 	if a < b { return a }
 	return b
+}
+
+// ── stub mailer ────────────────────────────────────────────────────────────────
+
+type stubMailer struct{ err error }
+
+func (s *stubMailer) SendTestEmail() error { return s.err }
+
+// ── TestPostTestEmail ──────────────────────────────────────────────────────────
+
+func TestPostTestEmail_NoMailer(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, "/api/test-email", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
+func TestPostTestEmail_Success(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	srv.SetMailer(&stubMailer{err: nil})
+	req := httptest.NewRequest(http.MethodPost, "/api/test-email", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["status"] != "sent" {
+		t.Errorf("expected status=sent, got %v", resp)
+	}
+}
+
+func TestPostTestEmail_Failure(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	srv.SetMailer(&stubMailer{err: errors.New("smtp down")})
+	req := httptest.NewRequest(http.MethodPost, "/api/test-email", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// ── TestGetExport ──────────────────────────────────────────────────────────────
+
+func TestGetExport_JSON(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	srv := newTestServer(t, dir)
+
+	// Trigger a sync and wait.
+	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("sync: %d", rr.Code)
+	}
+	pollStatus(t, srv)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/export?format=json", nil)
+	rr  = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	ct := rr.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("expected application/json content-type, got %q", ct)
+	}
+	var records []interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &records); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+}
+
+func TestGetExport_CSV(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	srv := newTestServer(t, dir)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export?format=csv", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	ct := rr.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/csv") {
+		t.Errorf("expected text/csv, got %q", ct)
+	}
+}
+
+// ── TestGetCompare ─────────────────────────────────────────────────────────────
+
+func TestGetCompare_MissingParams(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/compare", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+// ── TestGetCorruption ──────────────────────────────────────────────────────────
+
+func TestGetCorruption_Empty(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodGet, "/api/corruption", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var events []interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &events); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected empty events, got %d", len(events))
+	}
+}
+
+// ── TestSettings ───────────────────────────────────────────────────────────────
+
+func TestGetSettings_Default(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	ss  := settings.New("")
+	srv.WithSettings(ss)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var got settings.Settings
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.DiskThresholds.WarnPercent != 75 {
+		t.Errorf("expected warn_pct=75, got %d", got.DiskThresholds.WarnPercent)
+	}
+}
+
+func TestPostSettings_Update(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	ss  := settings.New("")
+	srv.WithSettings(ss)
+
+	body := `{"disk_thresholds":{"warn_pct":80,"error_pct":95},"notification_rules":{"on_success":true,"on_warning":true,"on_corruption":true,"on_error":true}}`
+	req  := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(body))
+	rr   := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Re-read
+	req = httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rr  = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	var got settings.Settings
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.DiskThresholds.WarnPercent != 80 {
+		t.Errorf("expected warn_pct=80, got %d", got.DiskThresholds.WarnPercent)
+	}
+}
+
+// ── TestSchedule ───────────────────────────────────────────────────────────────
+
+func TestGetSchedule_Default(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	sc  := scheduler.New("")
+	srv.WithScheduler(sc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/schedule", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var entries []interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Default store is empty.
+	if entries == nil {
+		t.Error("expected non-nil array")
+	}
+}
+
+func TestPostSchedule_Upsert(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	sc  := scheduler.New("")
+	srv.WithScheduler(sc)
+
+	body := `{"id":"sync","label":"Daily Sync","enabled":true,"cron_expr":"@daily"}`
+	req  := httptest.NewRequest(http.MethodPost, "/api/schedule", strings.NewReader(body))
+	rr   := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Re-read
+	req = httptest.NewRequest(http.MethodGet, "/api/schedule", nil)
+	rr  = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	var entries []map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("re-read unmarshal: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0]["id"] != "sync" {
+		t.Errorf("expected id=sync, got %v", entries[0]["id"])
+	}
+}
+
+// ── TestRetries ────────────────────────────────────────────────────────────────
+
+func TestGetRetries_Empty(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	q   := retry.New(100)
+	srv.WithRetryQueue(q)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/retries", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var items []interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty, got %d", len(items))
+	}
+}
+
+// ── TestDriveSync ─────────────────────────────────────────────────────────────
+
+func TestPostDriveSync_ValidIdx(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	srv := newTestServer(t, dir)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/drives/0/sync", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+	pollStatus(t, srv)
+}
+
+func TestPostDriveSync_InvalidIdx(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+	req := httptest.NewRequest(http.MethodPost, "/api/drives/99/sync", nil)
+	rr  := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
 }

@@ -4,18 +4,29 @@
 //
 // # Endpoints
 //
-//   - GET  /api/status     – last-run summary for all drives
-//   - GET  /api/drives     – configured drive paths and health
-//   - GET  /api/progress   – Server-Sent Events stream of live scan progress
-//   - GET  /api/history    – historical run records from each drive's database
-//   - POST /api/sync       – trigger a sync operation (non-blocking; returns 202 Accepted)
-//   - POST /api/scrub      – trigger a scrub operation (non-blocking; returns 202 Accepted)
-//   - POST /api/test-email – send a test email via the configured mailer
-//   - GET  /               – single-page web UI
+//   - GET  /api/status            – last-run summary for all drives
+//   - GET  /api/drives            – configured drive paths and health
+//   - GET  /api/progress          – Server-Sent Events stream of live scan progress
+//   - GET  /api/history           – historical run records from each drive's database
+//   - GET  /api/export            – export run history (format=json|csv)
+//   - GET  /api/compare           – compare two runs by ID (a=&b=)
+//   - GET  /api/corruption        – corruption events across all drives
+//   - GET  /api/settings          – current settings
+//   - POST /api/settings          – update settings
+//   - GET  /api/schedule          – current schedule entries
+//   - POST /api/schedule          – upsert a schedule entry
+//   - GET  /api/retries           – current retry queue
+//   - POST /api/sync              – trigger a sync operation (non-blocking; returns 202 Accepted)
+//   - POST /api/scrub             – trigger a scrub operation (non-blocking; returns 202 Accepted)
+//   - POST /api/drives/{idx}/sync – per-drive sync
+//   - POST /api/drives/{idx}/scrub – per-drive scrub
+//   - POST /api/test-email        – send a test email via the configured mailer
+//   - GET  /                      – single-page web UI
 package api
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -26,6 +37,9 @@ import (
 
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/coordinator"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/domain"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/retry"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/scheduler"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/settings"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/storage"
 )
 
@@ -73,17 +87,29 @@ type EmailSender interface {
 	SendTestEmail() error
 }
 
+// CorruptionEvent is a summary of a single run that detected bit rot.
+type CorruptionEvent struct {
+	DriveID        string    `json:"drive_id"`
+	DriveName      string    `json:"drive_name"`
+	StartedAt      time.Time `json:"started_at"`
+	FilesCorrupted int       `json:"files_corrupted"`
+	RunID          int64     `json:"run_id"`
+}
+
 // Server is the HTTP API server.  Create one with [New], then start it with
 // [Server.ListenAndServe].
 type Server struct {
-	ctx    context.Context // server-lifetime context used for background operations
-	opts   coordinator.Options
-	paths  []string
-	mu     sync.RWMutex
-	status *Status
-	hub    *progressHub
-	mux    *http.ServeMux
-	mailer EmailSender // optional; set via SetMailer
+	ctx       context.Context // server-lifetime context used for background operations
+	opts      coordinator.Options
+	paths     []string
+	mu        sync.RWMutex
+	status    *Status
+	hub       *progressHub
+	mux       *http.ServeMux
+	mailer    EmailSender    // optional; set via SetMailer
+	settings  *settings.Store
+	scheduler *scheduler.Store
+	retryQ    *retry.Queue
 }
 
 // Status holds the most recent aggregated scan results returned by the server.
@@ -141,6 +167,18 @@ func New(ctx context.Context, paths []string, opts coordinator.Options) *Server 
 	return s
 }
 
+// SetMailer wires in an optional EmailSender used by POST /api/test-email.
+func (s *Server) SetMailer(m EmailSender) { s.mailer = m }
+
+// WithSettings injects a settings store.
+func (s *Server) WithSettings(ss *settings.Store) { s.settings = ss }
+
+// WithScheduler injects a scheduler store.
+func (s *Server) WithScheduler(sc *scheduler.Store) { s.scheduler = sc }
+
+// WithRetryQueue injects a retry queue.
+func (s *Server) WithRetryQueue(q *retry.Queue) { s.retryQ = q }
+
 // ListenAndServe starts the HTTP server on addr (e.g. ":8080").
 // It blocks until ctx is cancelled or a fatal listen error occurs.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
@@ -180,8 +218,19 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/drives", s.handleDrives)
 	s.mux.HandleFunc("GET /api/progress", s.handleProgress)
 	s.mux.HandleFunc("GET /api/history", s.handleHistory)
+	s.mux.HandleFunc("GET /api/export", s.handleExport)
+	s.mux.HandleFunc("GET /api/compare", s.handleCompare)
+	s.mux.HandleFunc("GET /api/corruption", s.handleCorruption)
+	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
+	s.mux.HandleFunc("POST /api/settings", s.handlePostSettings)
+	s.mux.HandleFunc("GET /api/schedule", s.handleGetSchedule)
+	s.mux.HandleFunc("POST /api/schedule", s.handlePostSchedule)
+	s.mux.HandleFunc("GET /api/retries", s.handleGetRetries)
 	s.mux.HandleFunc("POST /api/sync", s.handleSync)
 	s.mux.HandleFunc("POST /api/scrub", s.handleScrub)
+	s.mux.HandleFunc("POST /api/drives/{idx}/sync", s.handleDriveSync)
+	s.mux.HandleFunc("POST /api/drives/{idx}/scrub", s.handleDriveScrub)
+	s.mux.HandleFunc("POST /api/test-email", s.handleTestEmail)
 	s.mux.Handle("/", http.FileServerFS(staticFS))
 }
 
@@ -243,7 +292,9 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			data, _ := json.Marshal(ev)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}
@@ -275,6 +326,221 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, all)
 }
 
+// handleExport streams run history as JSON or CSV.
+// Query params: format=json|csv (default json), type=history|corruption (default history).
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "json"
+	}
+
+	var all []*domain.RunRecord
+	for _, p := range s.paths {
+		recs, err := storage.GetRunHistoryForPath(r.Context(), p, 10000)
+		if err != nil {
+			slog.Warn("api: export history", "path", p, "err", err)
+			continue
+		}
+		all = append(all, recs...)
+	}
+	if all == nil {
+		all = []*domain.RunRecord{}
+	}
+
+	if format == "csv" {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", `attachment; filename="bitrot-history.csv"`)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{
+			"id", "drive_id", "drive_name", "started_at", "duration_ms",
+			"files_scanned", "files_added", "files_modified", "files_removed", "files_moved",
+			"files_validated", "files_corrupted", "sync_errors", "scrub_errors",
+		})
+		for _, rec := range all {
+			_ = cw.Write([]string{
+				strconv.FormatInt(rec.ID, 10),
+				rec.DriveID,
+				rec.DriveName,
+				rec.StartedAt.Format(time.RFC3339),
+				strconv.FormatInt(rec.DurationMs, 10),
+				strconv.Itoa(rec.FilesScanned),
+				strconv.Itoa(rec.FilesAdded),
+				strconv.Itoa(rec.FilesModified),
+				strconv.Itoa(rec.FilesRemoved),
+				strconv.Itoa(rec.FilesMoved),
+				strconv.Itoa(rec.FilesValidated),
+				strconv.Itoa(rec.FilesCorrupted),
+				strconv.Itoa(rec.SyncErrors),
+				strconv.Itoa(rec.ScrubErrors),
+			})
+		}
+		cw.Flush()
+		return
+	}
+
+	writeJSON(w, http.StatusOK, all)
+}
+
+// handleCompare computes the delta between two run records identified by the
+// "a" and "b" query parameters (int64 IDs).
+func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
+	aStr := r.URL.Query().Get("a")
+	bStr := r.URL.Query().Get("b")
+	if aStr == "" || bStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing a or b query params"})
+		return
+	}
+	idA, err := strconv.ParseInt(aStr, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid a"})
+		return
+	}
+	idB, err := strconv.ParseInt(bStr, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid b"})
+		return
+	}
+
+	var runA, runB *domain.RunRecord
+	for _, p := range s.paths {
+		recs, err := storage.GetRunsByIDs(r.Context(), p, []int64{idA, idB})
+		if err != nil {
+			slog.Warn("api: compare GetRunsByIDs", "path", p, "err", err)
+			continue
+		}
+		for _, rec := range recs {
+			if rec.ID == idA && runA == nil {
+				runA = rec
+			}
+			if rec.ID == idB && runB == nil {
+				runB = rec
+			}
+		}
+		if runA != nil && runB != nil {
+			break
+		}
+	}
+
+	if runA == nil || runB == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "one or both runs not found"})
+		return
+	}
+
+	delta := domain.RunDelta{
+		FilesAdded:     runB.FilesAdded - runA.FilesAdded,
+		FilesModified:  runB.FilesModified - runA.FilesModified,
+		FilesRemoved:   runB.FilesRemoved - runA.FilesRemoved,
+		FilesCorrupted: runB.FilesCorrupted - runA.FilesCorrupted,
+		DurationMs:     runB.DurationMs - runA.DurationMs,
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"run_a": runA,
+		"run_b": runB,
+		"delta": delta,
+	})
+}
+
+// handleCorruption returns all run_history rows where files_corrupted > 0
+// across all configured drives.
+func (s *Server) handleCorruption(w http.ResponseWriter, r *http.Request) {
+	var events []CorruptionEvent
+	for _, p := range s.paths {
+		recs, err := storage.GetCorruptionHistory(r.Context(), p, 100)
+		if err != nil {
+			slog.Warn("api: corruption history", "path", p, "err", err)
+			continue
+		}
+		for _, rec := range recs {
+			events = append(events, CorruptionEvent{
+				DriveID:        rec.DriveID,
+				DriveName:      rec.DriveName,
+				StartedAt:      rec.StartedAt,
+				FilesCorrupted: rec.FilesCorrupted,
+				RunID:          rec.ID,
+			})
+		}
+	}
+	if events == nil {
+		events = []CorruptionEvent{}
+	}
+	writeJSON(w, http.StatusOK, events)
+}
+
+// handleGetSettings returns the current settings.
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		writeJSON(w, http.StatusOK, settings.DefaultSettings())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.settings.Get())
+}
+
+// handlePostSettings updates the settings from the request body.
+func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not configured"})
+		return
+	}
+	var v settings.Settings
+	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.settings.Set(v); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.settings.Get())
+}
+
+// handleGetSchedule returns current schedule entries.
+func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
+	if s.scheduler == nil {
+		writeJSON(w, http.StatusOK, []scheduler.ScheduleEntry{})
+		return
+	}
+	entries := s.scheduler.GetAll()
+	if entries == nil {
+		entries = []scheduler.ScheduleEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// handlePostSchedule upserts a schedule entry from the request body.
+func (s *Server) handlePostSchedule(w http.ResponseWriter, r *http.Request) {
+	if s.scheduler == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "scheduler not configured"})
+		return
+	}
+	var e scheduler.ScheduleEntry
+	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.scheduler.Upsert(e); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	entries := s.scheduler.GetAll()
+	if entries == nil {
+		entries = []scheduler.ScheduleEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// handleGetRetries returns the current retry queue snapshot.
+func (s *Server) handleGetRetries(w http.ResponseWriter, r *http.Request) {
+	if s.retryQ == nil {
+		writeJSON(w, http.StatusOK, []retry.Item{})
+		return
+	}
+	items := s.retryQ.All()
+	if items == nil {
+		items = []retry.Item{}
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
 // handleSync triggers a sync operation (non-blocking; returns 202 Accepted).
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	opts := s.opts
@@ -291,10 +557,66 @@ func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	s.startOperation(w, opts)
 }
 
-// startOperation launches a coordinator.Run in the background and immediately
-// returns 202 Accepted to the caller.  The caller polls GET /api/status for
-// results.  Returns 409 Conflict if an operation is already in progress.
+// handleDriveSync triggers a sync for a single drive identified by the {idx}
+// path parameter (0-based index into s.paths).
+func (s *Server) handleDriveSync(w http.ResponseWriter, r *http.Request) {
+	idx, ok := s.parseDriveIdx(w, r)
+	if !ok {
+		return
+	}
+	opts := s.opts
+	opts.RunSync = true
+	opts.RunScrub = false
+	s.startOperationForPaths(w, []string{s.paths[idx]}, opts)
+}
+
+// handleDriveScrub triggers a scrub for a single drive identified by the {idx}
+// path parameter (0-based index into s.paths).
+func (s *Server) handleDriveScrub(w http.ResponseWriter, r *http.Request) {
+	idx, ok := s.parseDriveIdx(w, r)
+	if !ok {
+		return
+	}
+	opts := s.opts
+	opts.RunSync = false
+	opts.RunScrub = true
+	s.startOperationForPaths(w, []string{s.paths[idx]}, opts)
+}
+
+// parseDriveIdx extracts and validates the {idx} path value.
+func (s *Server) parseDriveIdx(w http.ResponseWriter, r *http.Request) (int, bool) {
+	idxStr := r.PathValue("idx")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 0 || idx >= len(s.paths) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid drive index"})
+		return 0, false
+	}
+	return idx, true
+}
+
+// handleTestEmail sends a test email via the configured mailer.
+func (s *Server) handleTestEmail(w http.ResponseWriter, r *http.Request) {
+	if s.mailer == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no mailer configured"})
+		return
+	}
+	if err := s.mailer.SendTestEmail(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+// startOperation launches a coordinator.Run in the background for all
+// configured paths and immediately returns 202 Accepted.
 func (s *Server) startOperation(w http.ResponseWriter, opts coordinator.Options) {
+	s.startOperationForPaths(w, s.paths, opts)
+}
+
+// startOperationForPaths launches a coordinator.Run in the background for the
+// given paths and immediately returns 202 Accepted to the caller.
+// Returns 409 Conflict if an operation is already in progress.
+func (s *Server) startOperationForPaths(w http.ResponseWriter, paths []string, opts coordinator.Options) {
 	s.mu.Lock()
 	if s.status.Running {
 		s.mu.Unlock()
@@ -324,13 +646,13 @@ func (s *Server) startOperation(w http.ResponseWriter, opts coordinator.Options)
 	// so it is cancelled on graceful shutdown rather than on HTTP disconnect.
 	go func() {
 		defer close(progCh)
-		results, duration := coordinator.Run(s.ctx, s.paths, opts)
+		results, duration := coordinator.Run(s.ctx, paths, opts)
 
 		drives := make([]DriveStatus, len(results))
 		for i, r := range results {
 			ds := DriveStatus{
 				Drive:       r.Drive,
-				Path:        s.paths[i],
+				Path:        paths[i],
 				Health:      r.Health,
 				SyncResult:  r.SyncResult,
 				ScrubResult: r.ScrubResult,
@@ -360,3 +682,4 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 		slog.Warn("api: failed to encode response", "err", err)
 	}
 }
+

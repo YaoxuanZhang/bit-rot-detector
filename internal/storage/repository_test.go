@@ -439,3 +439,188 @@ func TestRepository_CommitThenRollback(t *testing.T) {
 		t.Errorf("Rollback after Commit: %v", err)
 	}
 }
+
+func TestRepository_InsertRunHistory_And_GetHistory(t *testing.T) {
+	ctx := context.Background()
+	repo, dir := openRepo(t)
+
+	rec := &domain.RunRecord{
+		DriveID:        dir,
+		DriveName:      "test-drive",
+		StartedAt:      time.Now().Truncate(time.Second),
+		DurationMs:     1234,
+		FilesScanned:   10,
+		FilesAdded:     3,
+		FilesModified:  1,
+		FilesRemoved:   0,
+		FilesMoved:     0,
+		FilesValidated: 5,
+		FilesCorrupted: 0,
+		SyncErrors:     0,
+		ScrubErrors:    0,
+	}
+	if err := repo.InsertRunHistory(ctx, rec); err != nil {
+		t.Fatalf("InsertRunHistory: %v", err)
+	}
+	if err := repo.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	recs, err := storage.GetRunHistoryForPath(ctx, dir, 10)
+	if err != nil {
+		t.Fatalf("GetRunHistoryForPath: %v", err)
+	}
+	if len(recs) == 0 {
+		t.Fatal("expected at least 1 run record after InsertRunHistory + Commit")
+	}
+	if recs[0].DriveName != "test-drive" {
+		t.Errorf("expected DriveName=test-drive, got %q", recs[0].DriveName)
+	}
+	if recs[0].FilesScanned != 10 {
+		t.Errorf("expected FilesScanned=10, got %d", recs[0].FilesScanned)
+	}
+}
+
+func TestRepository_InsertRunHistory_MultipleRecords(t *testing.T) {
+	ctx := context.Background()
+	repo, dir := openRepo(t)
+
+	for i := 0; i < 3; i++ {
+		if err := repo.InsertRunHistory(ctx, &domain.RunRecord{
+			DriveID:   dir,
+			DriveName: "drive",
+			StartedAt: time.Now(),
+		}); err != nil {
+			t.Fatalf("InsertRunHistory[%d]: %v", i, err)
+		}
+	}
+	if err := repo.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	recs, err := storage.GetRunHistoryForPath(ctx, dir, 10)
+	if err != nil {
+		t.Fatalf("GetRunHistoryForPath: %v", err)
+	}
+	if len(recs) != 3 {
+		t.Errorf("expected 3 records, got %d", len(recs))
+	}
+}
+
+func TestGetRunHistoryForPath_NoDB(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	// No database created → should return nil without error.
+	recs, err := storage.GetRunHistoryForPath(ctx, dir, 10)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if recs != nil {
+		t.Errorf("expected nil records, got %v", recs)
+	}
+}
+
+func TestGetRunsByIDs_NoDB(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	recs, err := storage.GetRunsByIDs(ctx, dir, []int64{1, 2})
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if recs != nil {
+		t.Errorf("expected nil records, got %v", recs)
+	}
+}
+
+func TestGetRunsByIDs_EmptySlice(t *testing.T) {
+	ctx := context.Background()
+	recs, err := storage.GetRunsByIDs(ctx, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if recs != nil {
+		t.Errorf("expected nil for empty ids, got %v", recs)
+	}
+}
+
+func TestGetRunsByIDs_AfterInsert(t *testing.T) {
+	ctx := context.Background()
+	repo, dir := openRepo(t)
+
+	if err := repo.InsertRunHistory(ctx, &domain.RunRecord{
+		DriveID:   dir,
+		DriveName: "drive",
+		StartedAt: time.Now(),
+		DurationMs: 500,
+	}); err != nil {
+		t.Fatalf("InsertRunHistory: %v", err)
+	}
+	if err := repo.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	all, err := storage.GetRunHistoryForPath(ctx, dir, 1)
+	if err != nil || len(all) == 0 {
+		t.Fatalf("GetRunHistoryForPath: err=%v, len=%d", err, len(all))
+	}
+	id := all[0].ID
+
+	recs, err := storage.GetRunsByIDs(ctx, dir, []int64{id})
+	if err != nil {
+		t.Fatalf("GetRunsByIDs: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(recs))
+	}
+	if recs[0].ID != id {
+		t.Errorf("expected ID=%d, got %d", id, recs[0].ID)
+	}
+}
+
+func TestGetCorruptionHistory_NoDB(t *testing.T) {
+	ctx := context.Background()
+	recs, err := storage.GetCorruptionHistory(ctx, t.TempDir(), 10)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if recs != nil {
+		t.Errorf("expected nil, got %v", recs)
+	}
+}
+
+func TestGetCorruptionHistory_FiltersOnCorrupted(t *testing.T) {
+	ctx := context.Background()
+	repo, dir := openRepo(t)
+
+	// Insert one clean run and one corrupted run.
+	if err := repo.InsertRunHistory(ctx, &domain.RunRecord{
+		DriveID:        dir,
+		DriveName:      "drive",
+		StartedAt:      time.Now(),
+		FilesCorrupted: 0,
+	}); err != nil {
+		t.Fatalf("InsertRunHistory clean: %v", err)
+	}
+	if err := repo.InsertRunHistory(ctx, &domain.RunRecord{
+		DriveID:        dir,
+		DriveName:      "drive",
+		StartedAt:      time.Now(),
+		FilesCorrupted: 2,
+	}); err != nil {
+		t.Fatalf("InsertRunHistory corrupted: %v", err)
+	}
+	if err := repo.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	recs, err := storage.GetCorruptionHistory(ctx, dir, 10)
+	if err != nil {
+		t.Fatalf("GetCorruptionHistory: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 corrupted record, got %d", len(recs))
+	}
+	if recs[0].FilesCorrupted != 2 {
+		t.Errorf("expected FilesCorrupted=2, got %d", recs[0].FilesCorrupted)
+	}
+}

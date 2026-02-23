@@ -368,6 +368,113 @@ func (r *Repository) InsertRunHistory(ctx context.Context, rec *domain.RunRecord
 	return err
 }
 
+// GetRunsByIDs opens the production database at dir and returns records whose
+// id column is in the provided ids slice.  Returns nil without error when no
+// database exists yet or the table has not been created.
+func GetRunsByIDs(ctx context.Context, dir string, ids []int64) ([]*domain.RunRecord, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	prodPath := filepath.Join(dir, prodDBName)
+	if _, err := os.Stat(prodPath); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	db, err := sql.Open("sqlite", prodPath)
+	if err != nil {
+		return nil, fmt.Errorf("open prod DB for GetRunsByIDs: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT id, drive_id, drive_name, started_at, duration_ms,
+		       files_scanned, files_added, files_modified, files_removed, files_moved,
+		       files_validated, files_corrupted, sync_errors, scrub_errors
+		FROM run_history
+		WHERE id IN (%s)`, strings.Join(placeholders, ","))
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*domain.RunRecord
+	for rows.Next() {
+		var rec domain.RunRecord
+		var startedAt int64
+		if err := rows.Scan(
+			&rec.ID, &rec.DriveID, &rec.DriveName, &startedAt, &rec.DurationMs,
+			&rec.FilesScanned, &rec.FilesAdded, &rec.FilesModified, &rec.FilesRemoved, &rec.FilesMoved,
+			&rec.FilesValidated, &rec.FilesCorrupted, &rec.SyncErrors, &rec.ScrubErrors,
+		); err != nil {
+			return nil, err
+		}
+		rec.StartedAt = time.Unix(startedAt, 0)
+		out = append(out, &rec)
+	}
+	return out, rows.Err()
+}
+
+// GetCorruptionHistory opens the production database at dir and returns run
+// records where files_corrupted > 0, in descending chronological order.
+// Returns nil without error when no database exists yet.
+func GetCorruptionHistory(ctx context.Context, dir string, limit int) ([]*domain.RunRecord, error) {
+	prodPath := filepath.Join(dir, prodDBName)
+	if _, err := os.Stat(prodPath); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	db, err := sql.Open("sqlite", prodPath)
+	if err != nil {
+		return nil, fmt.Errorf("open prod DB for corruption history: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, drive_id, drive_name, started_at, duration_ms,
+		       files_scanned, files_added, files_modified, files_removed, files_moved,
+		       files_validated, files_corrupted, sync_errors, scrub_errors
+		FROM run_history
+		WHERE files_corrupted > 0
+		ORDER BY started_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*domain.RunRecord
+	for rows.Next() {
+		var rec domain.RunRecord
+		var startedAt int64
+		if err := rows.Scan(
+			&rec.ID, &rec.DriveID, &rec.DriveName, &startedAt, &rec.DurationMs,
+			&rec.FilesScanned, &rec.FilesAdded, &rec.FilesModified, &rec.FilesRemoved, &rec.FilesMoved,
+			&rec.FilesValidated, &rec.FilesCorrupted, &rec.SyncErrors, &rec.ScrubErrors,
+		); err != nil {
+			return nil, err
+		}
+		rec.StartedAt = time.Unix(startedAt, 0)
+		out = append(out, &rec)
+	}
+	return out, rows.Err()
+}
+
 // GetRunHistoryForPath opens the production database at dir and returns the
 // most recent run records in descending chronological order.  Returns nil
 // without error when no database exists yet or the table has not been created.

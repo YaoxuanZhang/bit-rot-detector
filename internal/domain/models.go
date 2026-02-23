@@ -168,6 +168,16 @@ type ProgressEvent struct {
 	Message string `json:"message,omitempty"`
 }
 
+// RunDelta holds the per-field differences between two RunRecord rows.
+// Positive values mean run_b had more; negative means run_b had less.
+type RunDelta struct {
+	FilesAdded     int   `json:"files_added"`
+	FilesModified  int   `json:"files_modified"`
+	FilesRemoved   int   `json:"files_removed"`
+	FilesCorrupted int   `json:"files_corrupted"`
+	DurationMs     int64 `json:"duration_ms"`
+}
+
 // RunRecord is a historical summary of one completed scan run, persisted in
 // the run_history table of each drive's bitrot.db.
 type RunRecord struct {
