@@ -1,0 +1,42 @@
+name: Assign Copilot agent to new issues
+
+# Trigger: every time a new issue is opened in this repository.
+# The GitHub Copilot coding agent is assigned to the issue, which causes it to
+# read the issue, implement the requested changes, and open a pull request.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write   # required to add assignees to issues
+
+jobs:
+  assign-copilot:
+    name: Assign GitHub Copilot to issue
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Assign Copilot coding agent
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: context.issue.number,
+                assignees: ['Copilot'],
+              });
+              core.info(
+                `Assigned GitHub Copilot to issue #${context.issue.number}`
+              );
+            } catch (err) {
+              // If Copilot is not enabled on this repository or the plan does
+              // not support the coding agent, the assignment will fail.  Log
+              // the error but do not fail the workflow so that issue creation
+              // itself is unaffected.
+              core.warning(
+                `Could not assign Copilot to issue #${context.issue.number}: ${err.message}`
+              );
+            }
