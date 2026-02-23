@@ -1,0 +1,55 @@
+# Bit Rot Detector — configuration file
+#
+# Copy this file to config.yaml and customize as needed.
+# Secrets (SMTP credentials) are NOT stored here; set them in .env instead.
+
+# Directories to monitor for bit rot (required, at least one path)
+target_paths:
+  - /path/to/monitor
+  # - /path/to/second/drive
+
+# SMTP server settings (non-secret fields only)
+smtp:
+  host: mail.smtp2go.com
+  port: 587
+  sender: alerts@example.com
+  recipient: you@example.com
+
+# Percentage of files to re-verify per scrub run (0.1–100.0)
+scrub_percentage: 1.0
+
+# How often files must have been last scrubbed before they are eligible:
+#   daily   — no age filter (scrub eligible files every run)
+#   weekly  — only files not verified in the last 7 days
+#   monthly — only files not verified in the last 30 days
+scrub_frequency: daily
+
+# Maximum concurrent hashing goroutines
+max_workers: 4
+
+# Minimum log severity: DEBUG | INFO | WARN | ERROR
+log_level: INFO
+
+# Number of days to keep old log files
+log_retention_days: 7
+
+# Disk-usage alert thresholds
+disk_thresholds:
+  warn_pct: 75
+  error_pct: 90
+
+# Per-event email notification toggles
+notification_rules:
+  on_success: false
+  on_warning: true
+  on_corruption: true
+  on_error: true
+
+# Scheduled auto-runs (leave empty to disable scheduled runs)
+schedule:
+  - label: Daily sync
+    cron_expr: "@daily"
+    enabled: true
+  - label: Weekly scrub
+    cron_expr: "@weekly"
+    enabled: true

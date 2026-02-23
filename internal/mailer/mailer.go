@@ -17,27 +17,31 @@ const separatorWidth = 40
 // Config holds SMTP configuration.
 type Config struct {
 	// Host is the SMTP server hostname (e.g. "mail.smtp2go.com").
-	Host string
+	Host string `yaml:"host" json:"host"`
 
 	// Port is the SMTP server port (typically 587 for STARTTLS).
-	Port int
+	Port int `yaml:"port" json:"port"`
 
 	// Username is the SMTP authentication username.
-	Username string
+	// It is a secret loaded from env (SMTP_USERNAME) and is never
+	// written to the YAML config file or returned by the API.
+	Username string `yaml:"-" json:"-"`
 
 	// Password is the SMTP authentication password.
-	Password string
+	// It is a secret loaded from env (SMTP_PASSWORD) and is never
+	// written to the YAML config file or returned by the API.
+	Password string `yaml:"-" json:"-"`
 
 	// Sender is the RFC 5321 envelope sender address.
-	Sender string
+	Sender string `yaml:"sender" json:"sender"`
 
 	// Recipient is the RFC 5321 envelope recipient address.
-	Recipient string
+	Recipient string `yaml:"recipient" json:"recipient"`
 
 	// NotifyOnSuccess controls whether an email is sent when the run
-	// completes without errors or corruption.  Failure/corruption emails are
-	// always sent regardless of this setting.
-	NotifyOnSuccess bool
+	// completes without errors or corruption.  Set from
+	// Config.NotificationRules.OnSuccess after loading; never persisted.
+	NotifyOnSuccess bool `yaml:"-" json:"-"`
 }
 
 // Mailer sends email notifications.
