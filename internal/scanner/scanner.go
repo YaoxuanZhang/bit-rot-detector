@@ -48,6 +48,12 @@ const workBufferSize = 512
 type Syncer struct {
 	hasher     domain.Hasher
 	numWorkers int
+	// ProgressCh is an optional channel that receives live progress events
+	// during sync and scrub operations.  A nil channel disables reporting.
+	ProgressCh chan<- domain.ProgressEvent
+	// DriveName is the human-readable label used in progress events.
+	// It is set by the coordinator after calling NewSyncer.
+	DriveName string
 }
 
 // NewSyncer creates a Syncer.
@@ -56,6 +62,18 @@ func NewSyncer(h domain.Hasher, numWorkers int) *Syncer {
 		numWorkers = 1
 	}
 	return &Syncer{hasher: h, numWorkers: numWorkers}
+}
+
+// emitProgress sends ev to ProgressCh if set, dropping silently when the
+// channel is full so that slow consumers never block the scanner.
+func (s *Syncer) emitProgress(ev domain.ProgressEvent) {
+	if s.ProgressCh == nil {
+		return
+	}
+	select {
+	case s.ProgressCh <- ev:
+	default:
+	}
 }
 
 // SyncDirectory walks rootPath, compares each file against the repository,
@@ -186,6 +204,11 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 			if scanned%1000 == 0 {
 				slog.Info("walking...", "scanned", scanned)
 			}
+			if scanned%250 == 0 {
+				s.emitProgress(domain.ProgressEvent{
+					Phase: "walk", Drive: filepath.Base(rootPath), Count: scanned,
+				})
+			}
 
 			// Short-circuit: if size and mtime match the stored record, skip
 			// re-hashing entirely and reuse the stored hash.
@@ -207,6 +230,7 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 	}()
 
 	// Collector: process worker results and write to the repository.
+	hashCount := 0
 	for res := range results {
 		select {
 		case <-ctx.Done():
@@ -220,6 +244,13 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 			result.Errors = append(result.Errors, fmt.Sprintf("hash %s: %v", res.Path, res.Err))
 			resultMu.Unlock()
 			continue
+		}
+
+		hashCount++
+		if hashCount%250 == 0 {
+			s.emitProgress(domain.ProgressEvent{
+				Phase: "hash", Drive: filepath.Base(rootPath), Count: hashCount,
+			})
 		}
 
 		existing, inDB := dbFiles[res.Path]
@@ -310,6 +341,9 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 		"removed", result.FilesRemoved,
 		"errors", len(result.Errors),
 	)
+	s.emitProgress(domain.ProgressEvent{
+		Phase: "done", Drive: filepath.Base(rootPath), Count: result.FilesScanned,
+	})
 	return result, nil
 }
 
@@ -328,6 +362,12 @@ func (s *Syncer) ScrubFiles(ctx context.Context, repo domain.Repository, percent
 	slog.Info("files selected for scrub", "count", len(files))
 
 	res := &domain.ScrubResult{}
+
+	// driveName is used in progress events; fall back to "scrub" when not set.
+	driveName := s.DriveName
+	if driveName == "" {
+		driveName = "scrub"
+	}
 
 	for _, rec := range files {
 		select {
@@ -363,6 +403,11 @@ func (s *Syncer) ScrubFiles(ctx context.Context, repo domain.Repository, percent
 		if res.FilesValidated%100 == 0 {
 			slog.Info("scrub progress", "validated", res.FilesValidated, "total", len(files))
 		}
+		if res.FilesValidated%50 == 0 {
+			s.emitProgress(domain.ProgressEvent{
+				Phase: "scrub", Drive: driveName, Count: res.FilesValidated, Total: len(files),
+			})
+		}
 	}
 
 	slog.Info("scrub complete",
@@ -370,6 +415,9 @@ func (s *Syncer) ScrubFiles(ctx context.Context, repo domain.Repository, percent
 		"corrupted", len(res.FilesCorrupted),
 		"errors", len(res.Errors),
 	)
+	s.emitProgress(domain.ProgressEvent{
+		Phase: "done", Drive: driveName, Count: res.FilesValidated, Total: len(files),
+	})
 	return res, nil
 }
 

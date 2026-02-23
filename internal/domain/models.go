@@ -148,3 +148,69 @@ type WorkResult struct {
 	Err error
 }
 
+// ProgressEvent is emitted by the coordinator during a scan operation to
+// allow real-time progress reporting via the Server-Sent Events endpoint.
+type ProgressEvent struct {
+	// Phase is one of "walk", "hash", "scrub", or "done".
+	Phase string `json:"phase"`
+
+	// Drive is the human-readable drive label.
+	Drive string `json:"drive"`
+
+	// Count is the number of files processed so far in this phase.
+	Count int `json:"count"`
+
+	// Total is the expected total for the current phase; 0 means unknown
+	// (e.g. during the walk/discovery phase).
+	Total int `json:"total"`
+
+	// Message is an optional human-readable status string.
+	Message string `json:"message,omitempty"`
+}
+
+// RunRecord is a historical summary of one completed scan run, persisted in
+// the run_history table of each drive's bitrot.db.
+type RunRecord struct {
+	// ID is the auto-incremented primary key.
+	ID int64 `json:"id"`
+
+	// DriveID is the absolute path of the monitored directory (stable key).
+	DriveID string `json:"drive_id"`
+
+	// DriveName is the human-readable label derived from the base name.
+	DriveName string `json:"drive_name"`
+
+	// StartedAt is the wall-clock time the run began.
+	StartedAt time.Time `json:"started_at"`
+
+	// DurationMs is the total wall-clock duration in milliseconds.
+	DurationMs int64 `json:"duration_ms"`
+
+	// FilesScanned is the total number of files visited.
+	FilesScanned int `json:"files_scanned"`
+
+	// FilesAdded is the number of new files inserted.
+	FilesAdded int `json:"files_added"`
+
+	// FilesModified is the number of files whose content changed.
+	FilesModified int `json:"files_modified"`
+
+	// FilesRemoved is the number of files deleted from the DB.
+	FilesRemoved int `json:"files_removed"`
+
+	// FilesMoved is the number of files detected as relocated.
+	FilesMoved int `json:"files_moved"`
+
+	// FilesValidated is the number of files verified by the scrub.
+	FilesValidated int `json:"files_validated"`
+
+	// FilesCorrupted is the number of files with hash mismatches (bit rot).
+	FilesCorrupted int `json:"files_corrupted"`
+
+	// SyncErrors is the count of non-fatal sync errors.
+	SyncErrors int `json:"sync_errors"`
+
+	// ScrubErrors is the count of non-fatal scrub errors.
+	ScrubErrors int `json:"scrub_errors"`
+}
+

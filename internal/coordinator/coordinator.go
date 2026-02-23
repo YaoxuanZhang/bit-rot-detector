@@ -60,6 +60,10 @@ type Options struct {
 	// MaxWorkers is the upper bound on hashing workers per drive.
 	// The IO-aware [monitor.Detect] call may further reduce this.
 	MaxWorkers int
+
+	// ProgressCh is an optional channel that receives live progress events
+	// during sync and scrub operations.  A nil channel disables reporting.
+	ProgressCh chan<- domain.ProgressEvent
 }
 
 // Run processes all target drives concurrently and returns aggregated results.
@@ -96,6 +100,7 @@ func Run(ctx context.Context, targetPaths []string, opts Options) ([]DriveResult
 // processDrive handles canary checks, shadow-DB open/commit/rollback, sync,
 // and scrub for a single drive.
 func processDrive(ctx context.Context, drivePath string, opts Options) DriveResult {
+	start := time.Now()
 	res := DriveResult{Drive: filepath.Base(drivePath)}
 	if res.Drive == "." || res.Drive == "" {
 		res.Drive = drivePath
@@ -163,6 +168,8 @@ func processDrive(ctx context.Context, drivePath string, opts Options) DriveResu
 
 	h := hasher.New()
 	syncer := scanner.NewSyncer(h, numWorkers)
+	syncer.ProgressCh = opts.ProgressCh
+	syncer.DriveName = res.Drive
 
 	// ── Sync ─────────────────────────────────────────────────────────────────
 	if opts.RunSync {
@@ -199,6 +206,14 @@ func processDrive(ctx context.Context, drivePath string, opts Options) DriveResu
 		res.Err = fmt.Errorf("canary post-check failed: %w", err)
 		slog.Error("canary disappeared during scan", "drive", res.Drive)
 		return res
+	}
+
+	// ── Persist run history (before commit so it is atomically included) ─────
+	if opts.RunSync || opts.RunScrub {
+		rec := buildRunRecord(res.Drive, drivePath, start, res.SyncResult, res.ScrubResult)
+		if histErr := repo.InsertRunHistory(ctx, rec); histErr != nil {
+			slog.Warn("insert run history", "drive", res.Drive, "err", histErr)
+		}
 	}
 
 	// ── Commit shadow DB ─────────────────────────────────────────────────────
@@ -308,4 +323,28 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// buildRunRecord constructs a RunRecord from the completed drive results.
+func buildRunRecord(driveName, driveID string, start time.Time, syncRes *domain.SyncResult, scrubRes *domain.ScrubResult) *domain.RunRecord {
+	rec := &domain.RunRecord{
+		DriveID:    driveID,
+		DriveName:  driveName,
+		StartedAt:  start,
+		DurationMs: time.Since(start).Milliseconds(),
+	}
+	if syncRes != nil {
+		rec.FilesScanned = syncRes.FilesScanned
+		rec.FilesAdded = syncRes.FilesAdded
+		rec.FilesModified = syncRes.FilesModified
+		rec.FilesRemoved = syncRes.FilesRemoved
+		rec.FilesMoved = syncRes.FilesMoved
+		rec.SyncErrors = len(syncRes.Errors)
+	}
+	if scrubRes != nil {
+		rec.FilesValidated = scrubRes.FilesValidated
+		rec.FilesCorrupted = len(scrubRes.FilesCorrupted)
+		rec.ScrubErrors = len(scrubRes.Errors)
+	}
+	return rec
 }

@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/domain"
@@ -155,6 +156,22 @@ func (r *Repository) createSchema() error {
 			scrub_count  INTEGER NOT NULL DEFAULT 0,
 			file_size    INTEGER NOT NULL,
 			mtime        INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS run_history (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			drive_id        TEXT    NOT NULL,
+			drive_name      TEXT    NOT NULL,
+			started_at      INTEGER NOT NULL,
+			duration_ms     INTEGER NOT NULL DEFAULT 0,
+			files_scanned   INTEGER NOT NULL DEFAULT 0,
+			files_added     INTEGER NOT NULL DEFAULT 0,
+			files_modified  INTEGER NOT NULL DEFAULT 0,
+			files_removed   INTEGER NOT NULL DEFAULT 0,
+			files_moved     INTEGER NOT NULL DEFAULT 0,
+			files_validated INTEGER NOT NULL DEFAULT 0,
+			files_corrupted INTEGER NOT NULL DEFAULT 0,
+			sync_errors     INTEGER NOT NULL DEFAULT 0,
+			scrub_errors    INTEGER NOT NULL DEFAULT 0
 		)`)
 	return err
 }
@@ -332,4 +349,73 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// InsertRunHistory persists a run summary into the run_history table of the
+// shadow database.  It is called after sync/scrub completes but before Commit,
+// so the record is atomically included in the next production database.
+func (r *Repository) InsertRunHistory(ctx context.Context, rec *domain.RunRecord) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO run_history
+			(drive_id, drive_name, started_at, duration_ms,
+			 files_scanned, files_added, files_modified, files_removed, files_moved,
+			 files_validated, files_corrupted, sync_errors, scrub_errors)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.DriveID, rec.DriveName, rec.StartedAt.Unix(), rec.DurationMs,
+		rec.FilesScanned, rec.FilesAdded, rec.FilesModified, rec.FilesRemoved, rec.FilesMoved,
+		rec.FilesValidated, rec.FilesCorrupted, rec.SyncErrors, rec.ScrubErrors,
+	)
+	return err
+}
+
+// GetRunHistoryForPath opens the production database at dir and returns the
+// most recent run records in descending chronological order.  Returns nil
+// without error when no database exists yet or the table has not been created.
+func GetRunHistoryForPath(ctx context.Context, dir string, limit int) ([]*domain.RunRecord, error) {
+	prodPath := filepath.Join(dir, prodDBName)
+	if _, err := os.Stat(prodPath); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	db, err := sql.Open("sqlite", prodPath)
+	if err != nil {
+		return nil, fmt.Errorf("open prod DB for history: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, drive_id, drive_name, started_at, duration_ms,
+		       files_scanned, files_added, files_modified, files_removed, files_moved,
+		       files_validated, files_corrupted, sync_errors, scrub_errors
+		FROM run_history
+		ORDER BY started_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		// Gracefully handle databases created before run_history was added.
+		// The modernc.org/sqlite CGO-free driver does not expose a stable
+		// typed sentinel for SQLITE_ERROR/"no such table", so we match the
+		// SQLite engine error message string, which is fixed and locale-independent.
+		if strings.Contains(err.Error(), "no such table") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*domain.RunRecord
+	for rows.Next() {
+		var rec domain.RunRecord
+		var startedAt int64
+		if err := rows.Scan(
+			&rec.ID, &rec.DriveID, &rec.DriveName, &startedAt, &rec.DurationMs,
+			&rec.FilesScanned, &rec.FilesAdded, &rec.FilesModified, &rec.FilesRemoved, &rec.FilesMoved,
+			&rec.FilesValidated, &rec.FilesCorrupted, &rec.SyncErrors, &rec.ScrubErrors,
+		); err != nil {
+			return nil, err
+		}
+		rec.StartedAt = time.Unix(startedAt, 0)
+		out = append(out, &rec)
+	}
+	return out, rows.Err()
 }

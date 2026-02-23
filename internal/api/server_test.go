@@ -211,6 +211,9 @@ func TestConflictWhenAlreadyRunning(t *testing.T) {
 	if rr2.Code != http.StatusConflict && rr2.Code != http.StatusAccepted {
 		t.Errorf("second request: expected 409 or 202, got %d", rr2.Code)
 	}
+
+	// Wait for all background goroutines to finish before TempDir cleanup.
+	pollStatus(t, srv)
 }
 
 func TestStaticUI_Served(t *testing.T) {
@@ -277,4 +280,136 @@ func TestStatusAfterSync_Populated(t *testing.T) {
 	if len(st.Drives) == 0 {
 		t.Error("expected drives in status after sync")
 	}
+}
+
+func TestGetProgress_SSE_Headers(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestServer(t, dir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/progress", nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.ServeHTTP(rr, req)
+	}()
+
+	// Give handler time to write headers.
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE handler did not exit after context cancel")
+	}
+
+	ct := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Errorf("expected Content-Type text/event-stream, got %q", ct)
+	}
+}
+
+func TestGetProgress_SSE_ReceivesEvents(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, dir)
+
+	// Subscribe to SSE before triggering operation.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sseReq := httptest.NewRequest(http.MethodGet, "/api/progress", nil).WithContext(ctx)
+	sseRR := httptest.NewRecorder()
+
+	sseDone := make(chan struct{})
+	go func() {
+		defer close(sseDone)
+		srv.ServeHTTP(sseRR, sseReq)
+	}()
+
+	// Trigger a sync.
+	syncReq := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	syncRR := httptest.NewRecorder()
+	srv.ServeHTTP(syncRR, syncReq)
+	if syncRR.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", syncRR.Code)
+	}
+
+	// Wait for operation to complete and cancel SSE.
+	pollStatus(t, srv)
+	cancel()
+	<-sseDone
+
+	// Body should contain at least one SSE data: line.
+	body := sseRR.Body.String()
+	if !strings.Contains(body, "data:") {
+		t.Errorf("expected at least one SSE data line, got body: %q", body[:min(200, len(body))])
+	}
+}
+
+func TestGetHistory_EmptyInitially(t *testing.T) {
+	dir := t.TempDir()
+	srv := newTestServer(t, dir)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history", nil)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var records []interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &records); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// No DB exists yet → empty array.
+	if len(records) != 0 {
+		t.Errorf("expected empty history before any run, got %d records", len(records))
+	}
+}
+
+func TestGetHistory_PopulatedAfterSync(t *testing.T) {
+	dir := t.TempDir()
+	writeCanaryFile(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "doc.txt"), []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, dir)
+
+	// Trigger sync and wait for completion.
+	syncReq := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	syncRR := httptest.NewRecorder()
+	srv.ServeHTTP(syncRR, syncReq)
+	if syncRR.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", syncRR.Code)
+	}
+	pollStatus(t, srv)
+
+	// Now history should contain one record.
+	histReq := httptest.NewRequest(http.MethodGet, "/api/history", nil)
+	histRR := httptest.NewRecorder()
+	srv.ServeHTTP(histRR, histReq)
+
+	if histRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", histRR.Code, histRR.Body.String())
+	}
+	var records []map[string]interface{}
+	if err := json.Unmarshal(histRR.Body.Bytes(), &records); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(records) == 0 {
+		t.Error("expected at least one run history record after sync")
+	}
+}
+
+func min(a, b int) int {
+	if a < b { return a }
+	return b
 }
