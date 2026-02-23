@@ -1,0 +1,23 @@
+:root {
+  --bg:      #0f1117;
+  --surface: #1a1d27;
+  --border:  #2e3147;
+  --accent:  #6366f1;
+  --ok:      #22c55e;
+  --warn:    #f59e0b;
+  --err:     #ef4444;
+  --text:    #e2e8f0;
+  --muted:   #6b7280;
+
+  /* Extended tokens */
+  --surface2:      #22263a;
+  --accent-hover:  #4f52d9;
+  --text-dim:      #94a3b8;
+  --radius-sm:     6px;
+  --radius-md:     10px;
+  --radius-lg:     14px;
+  --shadow:        0 4px 24px rgba(0,0,0,0.45);
+  --transition:    0.18s ease;
+  --font:          'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono:     'Cascadia Code', 'Fira Code', ui-monospace, monospace;
+}

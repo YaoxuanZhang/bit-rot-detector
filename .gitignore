@@ -28,3 +28,8 @@ test_email_scenarios/
 /bin/
 coverage.out
 coverage.html
+
+# Web / Node artefacts
+web/node_modules/
+web/dist/
+web/.vite/

@@ -11,8 +11,10 @@
 //   - GET  /api/export            – export run history (format=json|csv)
 //   - GET  /api/compare           – compare two runs by ID (a=&b=)
 //   - GET  /api/corruption        – corruption events across all drives
-//   - GET  /api/settings          – current settings
-//   - POST /api/settings          – update settings
+//   - GET  /api/config            – current config (secrets redacted)
+//   - POST /api/config            – update runtime-mutable config keys
+//   - GET  /api/settings          – current disk-threshold and notification settings
+//   - POST /api/settings          – update disk-threshold and notification settings
 //   - GET  /api/schedule          – current schedule entries
 //   - POST /api/schedule          – upsert a schedule entry
 //   - GET  /api/retries           – current retry queue
@@ -35,11 +37,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/config"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/coordinator"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/domain"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/retry"
-	"github.com/YaoxuanZhang/bit-rot-detector/internal/scheduler"
-	"github.com/YaoxuanZhang/bit-rot-detector/internal/settings"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/storage"
 )
 
@@ -99,17 +100,16 @@ type CorruptionEvent struct {
 // Server is the HTTP API server.  Create one with [New], then start it with
 // [Server.ListenAndServe].
 type Server struct {
-	ctx       context.Context // server-lifetime context used for background operations
-	opts      coordinator.Options
-	paths     []string
-	mu        sync.RWMutex
-	status    *Status
-	hub       *progressHub
-	mux       *http.ServeMux
-	mailer    EmailSender    // optional; set via SetMailer
-	settings  *settings.Store
-	scheduler *scheduler.Store
-	retryQ    *retry.Queue
+	ctx      context.Context // server-lifetime context used for background operations
+	opts     coordinator.Options
+	paths    []string
+	mu       sync.RWMutex
+	status   *Status
+	hub      *progressHub
+	mux      *http.ServeMux
+	mailer   EmailSender    // optional; set via SetMailer
+	cfgStore *config.Store  // optional; set via WithConfigStore
+	retryQ   *retry.Queue
 }
 
 // Status holds the most recent aggregated scan results returned by the server.
@@ -170,11 +170,9 @@ func New(ctx context.Context, paths []string, opts coordinator.Options) *Server 
 // SetMailer wires in an optional EmailSender used by POST /api/test-email.
 func (s *Server) SetMailer(m EmailSender) { s.mailer = m }
 
-// WithSettings injects a settings store.
-func (s *Server) WithSettings(ss *settings.Store) { s.settings = ss }
-
-// WithScheduler injects a scheduler store.
-func (s *Server) WithScheduler(sc *scheduler.Store) { s.scheduler = sc }
+// WithConfigStore injects a config store used by settings, schedule, and
+// config API endpoints.
+func (s *Server) WithConfigStore(cs *config.Store) { s.cfgStore = cs }
 
 // WithRetryQueue injects a retry queue.
 func (s *Server) WithRetryQueue(q *retry.Queue) { s.retryQ = q }
@@ -221,6 +219,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/export", s.handleExport)
 	s.mux.HandleFunc("GET /api/compare", s.handleCompare)
 	s.mux.HandleFunc("GET /api/corruption", s.handleCorruption)
+	s.mux.HandleFunc("GET /api/config", s.handleGetConfig)
+	s.mux.HandleFunc("POST /api/config", s.handlePostConfig)
 	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("POST /api/settings", s.handlePostSettings)
 	s.mux.HandleFunc("GET /api/schedule", s.handleGetSchedule)
@@ -466,64 +466,152 @@ func (s *Server) handleCorruption(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
-// handleGetSettings returns the current settings.
-func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	if s.settings == nil {
-		writeJSON(w, http.StatusOK, settings.DefaultSettings())
+// handleGetConfig returns the full config (with secrets redacted) as JSON.
+func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	if s.cfgStore == nil {
+		writeJSON(w, http.StatusOK, config.DefaultConfig())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.settings.Get())
+	writeJSON(w, http.StatusOK, s.cfgStore.Get())
 }
 
-// handlePostSettings updates the settings from the request body.
-func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
-	if s.settings == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not configured"})
+// handlePostConfig accepts a partial or full config JSON body, merges it into
+// the in-memory store, and saves config.yaml.
+func (s *Server) handlePostConfig(w http.ResponseWriter, r *http.Request) {
+	if s.cfgStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "config store not configured"})
 		return
 	}
-	var v settings.Settings
-	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
+	var patch config.Config
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := s.settings.Set(v); err != nil {
+	if err := s.cfgStore.Update(func(c *config.Config) error {
+		// Apply mutable fields from patch; secrets are always overlaid from env.
+		if patch.ScrubPercentage != 0 {
+			c.ScrubPercentage = patch.ScrubPercentage
+		}
+		if patch.ScrubFrequency != "" {
+			c.ScrubFrequency = patch.ScrubFrequency
+		}
+		if patch.MaxWorkers != 0 {
+			c.MaxWorkers = patch.MaxWorkers
+		}
+		if patch.LogLevel != "" {
+			c.LogLevel = patch.LogLevel
+		}
+		if patch.LogRetentionDays != 0 {
+			c.LogRetentionDays = patch.LogRetentionDays
+		}
+		c.DiskThresholds = patch.DiskThresholds
+		c.NotificationRules = patch.NotificationRules
+		if patch.SMTP.Host != "" {
+			c.SMTP.Host = patch.SMTP.Host
+		}
+		if patch.SMTP.Port != 0 {
+			c.SMTP.Port = patch.SMTP.Port
+		}
+		if patch.SMTP.Sender != "" {
+			c.SMTP.Sender = patch.SMTP.Sender
+		}
+		if patch.SMTP.Recipient != "" {
+			c.SMTP.Recipient = patch.SMTP.Recipient
+		}
+		return nil
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.settings.Get())
+	writeJSON(w, http.StatusOK, s.cfgStore.Get())
+}
+
+// handleGetSettings returns the current disk-threshold and notification settings.
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	if s.cfgStore == nil {
+		cfg := config.DefaultConfig()
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"disk_thresholds":    cfg.DiskThresholds,
+			"notification_rules": cfg.NotificationRules,
+		})
+		return
+	}
+	cfg := s.cfgStore.Get()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"disk_thresholds":    cfg.DiskThresholds,
+		"notification_rules": cfg.NotificationRules,
+	})
+}
+
+// handlePostSettings updates disk-threshold and notification settings.
+func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
+	if s.cfgStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not configured"})
+		return
+	}
+	var body struct {
+		DiskThresholds    config.DiskThresholds    `json:"disk_thresholds"`
+		NotificationRules config.NotificationRules `json:"notification_rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.cfgStore.Update(func(c *config.Config) error {
+		c.DiskThresholds = body.DiskThresholds
+		c.NotificationRules = body.NotificationRules
+		return nil
+	}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	cfg := s.cfgStore.Get()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"disk_thresholds":    cfg.DiskThresholds,
+		"notification_rules": cfg.NotificationRules,
+	})
 }
 
 // handleGetSchedule returns current schedule entries.
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
-	if s.scheduler == nil {
-		writeJSON(w, http.StatusOK, []scheduler.ScheduleEntry{})
+	if s.cfgStore == nil {
+		writeJSON(w, http.StatusOK, []config.ScheduleEntry{})
 		return
 	}
-	entries := s.scheduler.GetAll()
+	entries := s.cfgStore.Get().Schedule
 	if entries == nil {
-		entries = []scheduler.ScheduleEntry{}
+		entries = []config.ScheduleEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
 }
 
 // handlePostSchedule upserts a schedule entry from the request body.
 func (s *Server) handlePostSchedule(w http.ResponseWriter, r *http.Request) {
-	if s.scheduler == nil {
+	if s.cfgStore == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "scheduler not configured"})
 		return
 	}
-	var e scheduler.ScheduleEntry
+	var e config.ScheduleEntry
 	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := s.scheduler.Upsert(e); err != nil {
+	if err := s.cfgStore.Update(func(c *config.Config) error {
+		for i, ex := range c.Schedule {
+			if ex.ID == e.ID {
+				c.Schedule[i] = e
+				return nil
+			}
+		}
+		c.Schedule = append(c.Schedule, e)
+		return nil
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	entries := s.scheduler.GetAll()
+	entries := s.cfgStore.Get().Schedule
 	if entries == nil {
-		entries = []scheduler.ScheduleEntry{}
+		entries = []config.ScheduleEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
 }

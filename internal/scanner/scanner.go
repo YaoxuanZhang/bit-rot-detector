@@ -149,6 +149,11 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 	// written from both the walker goroutine and the collector goroutine.
 	var resultMu sync.Mutex
 
+	// walkTotal tracks the final discovered file count; set after walker finishes.
+	// It is used by hash-phase progress events so the UI can compute a percentage.
+	walkTotal := 0
+	walkDone := make(chan struct{})
+
 	// Producer: walk directory tree.
 	walkErr := make(chan error, 1)
 	go func() {
@@ -226,6 +231,16 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 			}
 			return nil
 		})
+		// Emit a final walk event with the total discovered count so the UI
+		// can use it as the hash-phase denominator.
+		resultMu.Lock()
+		finalScanned := result.FilesScanned
+		resultMu.Unlock()
+		s.emitProgress(domain.ProgressEvent{
+			Phase: "walk", Drive: filepath.Base(rootPath), Count: finalScanned,
+		})
+		walkTotal = finalScanned
+		close(walkDone)
 		walkErr <- err
 	}()
 
@@ -248,8 +263,19 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 
 		hashCount++
 		if hashCount%250 == 0 {
+			// Use the walk total as denominator; wait briefly if walk hasn't finished.
+			total := 0
+			select {
+			case <-walkDone:
+				total = walkTotal
+			default:
+				// Walk still in progress; use the current scan count as a best estimate.
+				resultMu.Lock()
+				total = result.FilesScanned
+				resultMu.Unlock()
+			}
 			s.emitProgress(domain.ProgressEvent{
-				Phase: "hash", Drive: filepath.Base(rootPath), Count: hashCount,
+				Phase: "hash", Drive: filepath.Base(rootPath), Count: hashCount, Total: total,
 			})
 		}
 

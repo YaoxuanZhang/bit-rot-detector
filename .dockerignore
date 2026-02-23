@@ -1,0 +1,12 @@
+.git
+.github
+web/node_modules
+web/dist
+web/.vite
+bin/
+coverage.out
+coverage.html
+*.log
+.env
+.env.*
+!.env.example

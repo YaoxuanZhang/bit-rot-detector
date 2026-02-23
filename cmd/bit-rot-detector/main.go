@@ -32,7 +32,6 @@ import (
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/mailer"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/retry"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/scheduler"
-	"github.com/YaoxuanZhang/bit-rot-detector/internal/settings"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/watcher"
 )
 
@@ -45,19 +44,20 @@ func run() int {
 	_ = godotenv.Load()
 
 	// ── Flags ────────────────────────────────────────────────────────────────
-	syncOnly      := flag.Bool("sync", false, "run sync operation only")
-	scrubOnly     := flag.Bool("scrub", false, "run scrub operation only")
-	testEmail     := flag.Bool("test-email", false, "send test email and exit")
-	watchMode     := flag.Bool("watch", false, "watch directories for changes and re-run on each change")
-	webMode       := flag.Bool("web", false, "start the HTTP status/control UI")
-	listenAddr    := flag.String("addr", ":8080", "HTTP listen address (used with -web)")
+	syncOnly   := flag.Bool("sync", false, "run sync operation only")
+	scrubOnly  := flag.Bool("scrub", false, "run scrub operation only")
+	testEmail  := flag.Bool("test-email", false, "send test email and exit")
+	watchMode  := flag.Bool("watch", false, "watch directories for changes and re-run on each change")
+	webMode    := flag.Bool("web", false, "start the HTTP status/control UI")
+	listenAddr := flag.String("addr", ":8080", "HTTP listen address (used with -web)")
+	configPath := flag.String("config", "config.yaml", "path to config.yaml")
 	flag.Parse()
 
 	// ── Logging ──────────────────────────────────────────────────────────────
 	setupLogging("INFO")
 
 	// ── Configuration ────────────────────────────────────────────────────────
-	cfg, err := config.Load()
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		slog.Error("configuration error", "err", err)
 		return 1
@@ -75,7 +75,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	m := mailer.New(cfg.Email)
+	m := mailer.New(cfg.SMTP)
 
 	// ── Test email mode ───────────────────────────────────────────────────────
 	if *testEmail {
@@ -102,15 +102,29 @@ func run() int {
 
 	// ── Web UI mode ───────────────────────────────────────────────────────────
 	if *webMode {
-		settingsStore := settings.New("") // in-memory for now (no file path)
-		schedStore    := scheduler.New("")
-		retryQueue    := retry.New(100)
+		cfgStore  := config.NewStore(*cfg, *configPath)
+		retryQueue := retry.New(100)
 
 		srv := api.New(ctx, cfg.TargetPaths, opts)
 		srv.SetMailer(m)
-		srv.WithSettings(settingsStore)
-		srv.WithScheduler(schedStore)
+		srv.WithConfigStore(cfgStore)
 		srv.WithRetryQueue(retryQueue)
+
+		// Start the scheduler runner in the background.
+		schedRunner := scheduler.NewRunner(cfgStore, func(schedCtx context.Context, id string) {
+			slog.Info("scheduled run triggered", "id", id)
+			results, duration := coordinator.Run(schedCtx, cfg.TargetPaths, opts)
+			errors := coordinator.CollectErrors(results)
+			m.SendUnifiedReport(
+				coordinator.ToMailerSyncEntries(results),
+				coordinator.ToMailerScrubEntries(results),
+				coordinator.ToHealthSlice(results),
+				errors,
+				duration,
+			)
+		})
+		go schedRunner.Run(ctx)
+
 		slog.Info("starting web UI", "addr", *listenAddr)
 		if err := srv.ListenAndServe(ctx, *listenAddr); err != nil {
 			slog.Error("web server error", "err", err)

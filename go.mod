@@ -6,6 +6,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/zeebo/blake3 v0.2.4
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1
 )
 
