@@ -6,8 +6,8 @@
 //
 //   - GET  /api/status    – last-run summary for all drives
 //   - GET  /api/drives    – configured drive paths and health
-//   - POST /api/sync      – trigger a sync operation (non-blocking; streams JSON event)
-//   - POST /api/scrub     – trigger a scrub operation (non-blocking; streams JSON event)
+//   - POST /api/sync      – trigger a sync operation (non-blocking; returns 202 Accepted)
+//   - POST /api/scrub     – trigger a scrub operation (non-blocking; returns 202 Accepted)
 //   - GET  /              – single-page web UI
 package api
 
@@ -26,6 +26,7 @@ import (
 // Server is the HTTP API server.  Create one with [New], then start it with
 // [Server.ListenAndServe].
 type Server struct {
+	ctx    context.Context // server-lifetime context used for background operations
 	opts   coordinator.Options
 	paths  []string
 	mu     sync.RWMutex
@@ -70,10 +71,13 @@ type DriveStatus struct {
 }
 
 // New creates a Server for the given target paths and coordinator options.
+// ctx is the server's lifetime context; background operations (sync/scrub)
+// are cancelled when ctx is cancelled.
 // The server starts with an empty status until the first operation is triggered.
-func New(paths []string, opts coordinator.Options) *Server {
+func New(ctx context.Context, paths []string, opts coordinator.Options) *Server {
 	s := &Server{
-		opts:  opts,
+		ctx:  ctx,
+		opts: opts,
 		paths: paths,
 		status: &Status{
 			Drives: []DriveStatus{},
@@ -88,9 +92,13 @@ func New(paths []string, opts coordinator.Options) *Server {
 // It blocks until ctx is cancelled or a fatal listen error occurs.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	srv := &http.Server{
-		Addr:        addr,
-		Handler:     s.mux,
-		ReadTimeout: 15 * time.Second,
+		Addr:              addr,
+		Handler:           s.mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      120 * time.Second, // long scrub operations
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB (1,048,576 bytes)
 	}
 	go func() {
 		<-ctx.Done()
@@ -141,25 +149,26 @@ func (s *Server) handleDrives(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSync triggers a sync operation.
+// handleSync triggers a sync operation (non-blocking; returns 202 Accepted).
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	opts := s.opts
 	opts.RunSync = true
 	opts.RunScrub = false
-	s.runOperation(r.Context(), w, opts)
+	s.startOperation(w, opts)
 }
 
-// handleScrub triggers a scrub operation.
+// handleScrub triggers a scrub operation (non-blocking; returns 202 Accepted).
 func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	opts := s.opts
 	opts.RunSync = false
 	opts.RunScrub = true
-	s.runOperation(r.Context(), w, opts)
+	s.startOperation(w, opts)
 }
 
-// runOperation runs a coordinator.Run and updates the server's status.
-// It writes the result as a JSON response.
-func (s *Server) runOperation(ctx context.Context, w http.ResponseWriter, opts coordinator.Options) {
+// startOperation launches a coordinator.Run in the background and immediately
+// returns 202 Accepted to the caller.  The caller polls GET /api/status for
+// results.  Returns 409 Conflict if an operation is already in progress.
+func (s *Server) startOperation(w http.ResponseWriter, opts coordinator.Options) {
 	s.mu.Lock()
 	if s.status.Running {
 		s.mu.Unlock()
@@ -171,38 +180,38 @@ func (s *Server) runOperation(ctx context.Context, w http.ResponseWriter, opts c
 	s.status.Running = true
 	s.mu.Unlock()
 
-	results, duration := coordinator.Run(ctx, s.paths, opts)
+	// Acknowledge immediately so the client is not blocked waiting for I/O.
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 
-	drives := make([]DriveStatus, len(results))
-	for i, r := range results {
-		ds := DriveStatus{
-			Drive:       r.Drive,
-			Path:        s.paths[i],
-			Health:      r.Health,
-			SyncResult:  r.SyncResult,
-			ScrubResult: r.ScrubResult,
+	// Run the operation in the background using the server's lifetime context
+	// so it is cancelled on graceful shutdown rather than on HTTP disconnect.
+	go func() {
+		results, duration := coordinator.Run(s.ctx, s.paths, opts)
+
+		drives := make([]DriveStatus, len(results))
+		for i, r := range results {
+			ds := DriveStatus{
+				Drive:       r.Drive,
+				Path:        s.paths[i],
+				Health:      r.Health,
+				SyncResult:  r.SyncResult,
+				ScrubResult: r.ScrubResult,
+			}
+			if r.Err != nil {
+				ds.Err = r.Err.Error()
+			}
+			drives[i] = ds
 		}
-		if r.Err != nil {
-			ds.Err = r.Err.Error()
+
+		s.mu.Lock()
+		s.status = &Status{
+			LastRun:  time.Now(),
+			Duration: duration.String(),
+			Running:  false,
+			Drives:   drives,
 		}
-		drives[i] = ds
-	}
-
-	newStatus := &Status{
-		LastRun:  time.Now(),
-		Duration: duration.String(),
-		Running:  false,
-		Drives:   drives,
-	}
-	s.mu.Lock()
-	s.status = newStatus
-	// Take a value copy while holding the lock so the JSON encoder does not
-	// race with a concurrent runOperation that may set Running=true on the
-	// shared pointer.
-	response := *newStatus
-	s.mu.Unlock()
-
-	writeJSON(w, http.StatusOK, &response)
+		s.mu.Unlock()
+	}()
 }
 
 // writeJSON writes v as a JSON response with the given status code.

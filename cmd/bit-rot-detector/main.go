@@ -99,7 +99,7 @@ func run() int {
 
 	// ── Web UI mode ───────────────────────────────────────────────────────────
 	if *webMode {
-		srv := api.New(cfg.TargetPaths, opts)
+		srv := api.New(ctx, cfg.TargetPaths, opts)
 		slog.Info("starting web UI", "addr", *listenAddr)
 		if err := srv.ListenAndServe(ctx, *listenAddr); err != nil {
 			slog.Error("web server error", "err", err)

@@ -122,6 +122,11 @@ type WorkItem struct {
 
 	// Mtime is the file's modification time at the time of the walk.
 	Mtime time.Time
+
+	// KnownHash is non-empty when the file's size and mtime are identical to
+	// the stored record.  Workers skip re-hashing and return this value
+	// directly, avoiding a full disk read for unchanged files.
+	KnownHash string
 }
 
 // WorkResult is the result produced by a hashing worker and sent back to the

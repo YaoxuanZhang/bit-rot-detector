@@ -9,7 +9,7 @@ LDFLAGS     := -s -w -X main.version=$(VERSION)
 GO          := go
 GOFLAGS     := -trimpath
 
-.PHONY: all build clean test lint vet fmt tidy help
+.PHONY: all build clean test lint vet fmt tidy dev run help
 
 ## all: build the binary (default target)
 all: build
@@ -63,6 +63,14 @@ tidy:
 ## clean: remove build artefacts
 clean:
 	rm -rf $(OUTPUT_DIR) coverage.out coverage.html
+
+## dev: build and run the web UI locally (loads .env; default addr :8080)
+dev: build
+	$(OUTPUT_DIR)/$(BINARY) -web -addr :8080
+
+## run: run the detector once with go run (loads .env; pass ARGS= for extra flags)
+run:
+	$(GO) run $(CMD_DIR) $(ARGS)
 
 ## help: show this help
 help:

@@ -19,7 +19,7 @@ import (
 // newTestServer returns a *Server wired to a real temp directory.
 func newTestServer(t *testing.T, dir string) *api.Server {
 	t.Helper()
-	return api.New([]string{dir}, coordinator.Options{
+	return api.New(context.Background(), []string{dir}, coordinator.Options{
 		RunSync:         true,
 		RunScrub:        true,
 		ScrubPercentage: 100,
@@ -34,6 +34,27 @@ func writeCanaryFile(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(dir, ".bitrot-canary"), nil, 0o644); err != nil {
 		t.Fatalf("writeCanaryFile: %v", err)
 	}
+}
+
+// pollStatus polls GET /api/status until Running is false or timeout.
+func pollStatus(t *testing.T, srv *api.Server) api.Status {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		var st api.Status
+		if err := json.Unmarshal(rr.Body.Bytes(), &st); err != nil {
+			t.Fatalf("pollStatus: unmarshal: %v", err)
+		}
+		if !st.Running {
+			return st
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("pollStatus: operation did not complete within timeout")
+	return api.Status{}
 }
 
 func TestGetStatus_InitiallyEmpty(t *testing.T) {
@@ -77,22 +98,43 @@ func TestGetDrives(t *testing.T) {
 	}
 }
 
-func TestPostSync_RequiresCanary(t *testing.T) {
+func TestPostSync_Returns202(t *testing.T) {
 	dir := t.TempDir()
-	// No canary → coordinator should return an error.
+	writeCanaryFile(t, dir)
+
 	srv := newTestServer(t, dir)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync", bytes.NewReader(nil))
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 envelope, got %d", rr.Code)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted, got %d: %s", rr.Code, rr.Body.String())
 	}
-	var st api.Status
-	if err := json.Unmarshal(rr.Body.Bytes(), &st); err != nil {
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	if resp["status"] != "accepted" {
+		t.Errorf("expected status=accepted, got %v", resp)
+	}
+}
+
+func TestPostSync_RequiresCanary(t *testing.T) {
+	dir := t.TempDir()
+	// No canary → coordinator should return an error after async completion.
+	srv := newTestServer(t, dir)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync", bytes.NewReader(nil))
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rr.Code)
+	}
+
+	// Poll until complete, then check for error.
+	st := pollStatus(t, srv)
 	if len(st.Drives) == 0 {
 		t.Fatal("expected at least one drive result")
 	}
@@ -111,14 +153,11 @@ func TestPostSync_Success(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	var st api.Status
-	if err := json.Unmarshal(rr.Body.Bytes(), &st); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	st := pollStatus(t, srv)
 	if st.Running {
 		t.Error("expected Running=false after sync completes")
 	}
@@ -130,7 +169,7 @@ func TestPostSync_Success(t *testing.T) {
 	}
 }
 
-func TestPostScrub_Success(t *testing.T) {
+func TestPostScrub_Returns202(t *testing.T) {
 	dir := t.TempDir()
 	writeCanaryFile(t, dir)
 
@@ -140,8 +179,8 @@ func TestPostScrub_Success(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rr.Code)
 	}
 }
 
@@ -151,27 +190,23 @@ func TestConflictWhenAlreadyRunning(t *testing.T) {
 
 	srv := newTestServer(t, dir)
 
-	// Issue two concurrent requests.
+	// Issue first request — returns 202 immediately.
 	req1 := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
 	rr1 := httptest.NewRecorder()
+	srv.ServeHTTP(rr1, req1)
 
-	done := make(chan struct{})
-	go func() {
-		srv.ServeHTTP(rr1, req1)
-		close(done)
-	}()
+	if rr1.Code != http.StatusAccepted {
+		t.Fatalf("first request: expected 202, got %d", rr1.Code)
+	}
 
-	time.Sleep(10 * time.Millisecond)
-
+	// Issue second request while first is still running.
 	req2 := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
 	rr2 := httptest.NewRecorder()
 	srv.ServeHTTP(rr2, req2)
 
-	<-done
-
-	// Accept 200 (first finished) or 409 (genuinely concurrent).
-	if rr2.Code != http.StatusOK && rr2.Code != http.StatusConflict {
-		t.Errorf("expected 200 or 409, got %d", rr2.Code)
+	// Expect either 409 (caught the race) or 202 (first already finished).
+	if rr2.Code != http.StatusConflict && rr2.Code != http.StatusAccepted {
+		t.Errorf("second request: expected 409 or 202, got %d", rr2.Code)
 	}
 }
 
@@ -222,20 +257,17 @@ func TestStatusAfterSync_Populated(t *testing.T) {
 
 	srv := newTestServer(t, dir)
 
-	// Trigger a sync.
+	// Trigger a sync (async).
 	syncReq := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
 	syncRR := httptest.NewRecorder()
 	srv.ServeHTTP(syncRR, syncReq)
 
-	// Then query status.
-	statusReq := httptest.NewRequest(http.MethodGet, "/api/status", nil)
-	statusRR := httptest.NewRecorder()
-	srv.ServeHTTP(statusRR, statusReq)
-
-	var st api.Status
-	if err := json.Unmarshal(statusRR.Body.Bytes(), &st); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if syncRR.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", syncRR.Code)
 	}
+
+	// Poll until done, then verify status is populated.
+	st := pollStatus(t, srv)
 	if st.LastRun.IsZero() {
 		t.Error("expected LastRun to be set after sync")
 	}
@@ -243,4 +275,3 @@ func TestStatusAfterSync_Populated(t *testing.T) {
 		t.Error("expected drives in status after sync")
 	}
 }
-

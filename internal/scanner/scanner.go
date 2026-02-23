@@ -98,6 +98,16 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 					return
 				default:
 				}
+				// Short-circuit: reuse the stored hash if the file is unchanged.
+				if item.KnownHash != "" {
+					results <- domain.WorkResult{
+						Path:  item.Path,
+						Hash:  item.KnownHash,
+						Size:  item.Size,
+						Mtime: item.Mtime,
+					}
+					continue
+				}
 				hash, herr := s.hasher.ComputeHash(ctx, item.Path)
 				results <- domain.WorkResult{
 					Path:  item.Path,
@@ -117,6 +127,9 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 	}()
 
 	result := &domain.SyncResult{}
+	// resultMu protects result.Errors and all result counter fields that are
+	// written from both the walker goroutine and the collector goroutine.
+	var resultMu sync.Mutex
 
 	// Producer: walk directory tree.
 	walkErr := make(chan error, 1)
@@ -125,7 +138,9 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 		err := filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				slog.Warn("walk error", "path", path, "err", err)
+				resultMu.Lock()
 				result.Errors = append(result.Errors, err.Error())
+				resultMu.Unlock()
 				return nil // continue walking
 			}
 			if d.IsDir() {
@@ -147,7 +162,9 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 			info, serr := d.Info()
 			if serr != nil {
 				slog.Warn("stat error", "path", path, "err", serr)
+				resultMu.Lock()
 				result.Errors = append(result.Errors, serr.Error())
+				resultMu.Unlock()
 				return nil
 			}
 
@@ -156,18 +173,33 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 			mtime := info.ModTime()
 
 			seenMu.Lock()
-			seenFiles[absPath] = struct{ size int64; mtime time.Time }{size, mtime}
+			seenFiles[absPath] = struct {
+				size  int64
+				mtime time.Time
+			}{size, mtime}
 			seenMu.Unlock()
 
+			resultMu.Lock()
 			result.FilesScanned++
-			if result.FilesScanned%1000 == 0 {
-				slog.Info("walking...", "scanned", result.FilesScanned)
+			scanned := result.FilesScanned
+			resultMu.Unlock()
+			if scanned%1000 == 0 {
+				slog.Info("walking...", "scanned", scanned)
+			}
+
+			// Short-circuit: if size and mtime match the stored record, skip
+			// re-hashing entirely and reuse the stored hash.
+			item := domain.WorkItem{Path: absPath, Size: size, Mtime: mtime}
+			if existing, ok := dbFiles[absPath]; ok &&
+				existing.FileSize == size &&
+				existing.Mtime.Unix() == mtime.Unix() {
+				item.KnownHash = existing.Hash
 			}
 
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case work <- domain.WorkItem{Path: absPath, Size: size, Mtime: mtime}:
+			case work <- item:
 			}
 			return nil
 		})
@@ -184,7 +216,9 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 
 		if res.Err != nil {
 			slog.Warn("hash error", "path", res.Path, "err", res.Err)
+			resultMu.Lock()
 			result.Errors = append(result.Errors, fmt.Sprintf("hash %s: %v", res.Path, res.Err))
+			resultMu.Unlock()
 			continue
 		}
 
@@ -202,7 +236,9 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 			mtimeChanged := existing.Mtime.Unix() != res.Mtime.Unix()
 
 			if sizeChanged || mtimeChanged {
+				resultMu.Lock()
 				result.FilesModified++
+				resultMu.Unlock()
 				slog.Info("file modified", "path", res.Path)
 			}
 			rec.AddedAt = existing.AddedAt
@@ -223,18 +259,24 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 				if err := repo.DeleteFile(ctx, movedFrom); err != nil {
 					slog.Warn("delete moved-from record", "path", movedFrom, "err", err)
 				}
+				resultMu.Lock()
 				result.FilesMoved++
+				resultMu.Unlock()
 				slog.Info("file moved", "from", movedFrom, "to", res.Path)
 			} else {
 				rec.AddedAt = time.Now()
+				resultMu.Lock()
 				result.FilesAdded++
+				resultMu.Unlock()
 				slog.Debug("file added", "path", res.Path)
 			}
 		}
 
 		if err := repo.UpsertFile(ctx, rec); err != nil {
 			slog.Warn("upsert file", "path", res.Path, "err", err)
+			resultMu.Lock()
 			result.Errors = append(result.Errors, fmt.Sprintf("upsert %s: %v", res.Path, err))
+			resultMu.Unlock()
 		}
 	}
 

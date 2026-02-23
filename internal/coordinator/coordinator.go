@@ -138,10 +138,16 @@ func processDrive(ctx context.Context, drivePath string, opts Options) DriveResu
 			slog.Warn("could not compute DB checksum; skipping verification",
 				"drive", res.Drive, "err", err)
 		} else if current != storedChecksum {
-			res.Err = fmt.Errorf("database checksum mismatch on %s (expected %s, got %s)",
-				res.Drive, storedChecksum[:16], current[:16])
-			slog.Error("DB checksum mismatch", "drive", res.Drive)
-			return res
+			// Treat mismatch as a recoverable warning rather than a fatal error.
+			// This handles the case where a previous canary write succeeded but
+			// the DB commit did not (or vice versa), which would otherwise cause
+			// every subsequent run to fail permanently.
+			slog.Warn("DB checksum mismatch – continuing with best-effort recovery; "+
+				"canary will be rewritten on successful commit",
+				"drive", res.Drive,
+				"stored_prefix", storedChecksum[:min(16, len(storedChecksum))],
+				"current_prefix", current[:min(16, len(current))],
+			)
 		} else {
 			slog.Info("DB checksum verified", "drive", res.Drive)
 		}

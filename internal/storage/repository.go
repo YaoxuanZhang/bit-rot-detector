@@ -145,8 +145,8 @@ func (r *Repository) createSchema() error {
 }
 
 // GetAllFiles returns all file records keyed by absolute path.
-func (r *Repository) GetAllFiles(_ context.Context) (map[string]*domain.FileRecord, error) {
-	rows, err := r.db.Query(
+func (r *Repository) GetAllFiles(ctx context.Context) (map[string]*domain.FileRecord, error) {
+	rows, err := r.db.QueryContext(ctx,
 		`SELECT abs_path, hash, added_at, last_seen, last_scrubbed, scrub_count, file_size, mtime
 		 FROM files`)
 	if err != nil {
@@ -180,7 +180,7 @@ func (r *Repository) GetAllFiles(_ context.Context) (map[string]*domain.FileReco
 }
 
 // UpsertFile inserts or replaces a file record.
-func (r *Repository) UpsertFile(_ context.Context, rec *domain.FileRecord) error {
+func (r *Repository) UpsertFile(ctx context.Context, rec *domain.FileRecord) error {
 	var lastScrubbed *int64
 	if rec.LastScrubbed != nil {
 		v := rec.LastScrubbed.Unix()
@@ -190,7 +190,7 @@ func (r *Repository) UpsertFile(_ context.Context, rec *domain.FileRecord) error
 	if addedAt == 0 {
 		addedAt = time.Now().Unix()
 	}
-	_, err := r.db.Exec(
+	_, err := r.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO files
 		 (abs_path, hash, added_at, last_seen, last_scrubbed, scrub_count, file_size, mtime)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -206,13 +206,13 @@ func (r *Repository) UpsertFile(_ context.Context, rec *domain.FileRecord) error
 }
 
 // DeleteFile removes a file record by absolute path.
-func (r *Repository) DeleteFile(_ context.Context, path string) error {
-	_, err := r.db.Exec(`DELETE FROM files WHERE abs_path = ?`, path)
+func (r *Repository) DeleteFile(ctx context.Context, path string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM files WHERE abs_path = ?`, path)
 	return err
 }
 
 // GetFilesForScrub returns files eligible for scrubbing ordered by least-recently scrubbed.
-func (r *Repository) GetFilesForScrub(_ context.Context, percentage float64, minAgeDays *int) ([]*domain.FileRecord, error) {
+func (r *Repository) GetFilesForScrub(ctx context.Context, percentage float64, minAgeDays *int) ([]*domain.FileRecord, error) {
 	query := `SELECT abs_path, hash, added_at, last_seen, last_scrubbed, scrub_count, file_size, mtime FROM files`
 	var args []any
 
@@ -223,7 +223,7 @@ func (r *Repository) GetFilesForScrub(_ context.Context, percentage float64, min
 	}
 	query += ` ORDER BY last_scrubbed ASC`
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -263,8 +263,8 @@ func (r *Repository) GetFilesForScrub(_ context.Context, percentage float64, min
 }
 
 // UpdateScrubStatus updates the last-scrubbed timestamp and increments scrub_count.
-func (r *Repository) UpdateScrubStatus(_ context.Context, path string) error {
-	_, err := r.db.Exec(
+func (r *Repository) UpdateScrubStatus(ctx context.Context, path string) error {
+	_, err := r.db.ExecContext(ctx,
 		`UPDATE files SET last_scrubbed = ?, scrub_count = scrub_count + 1 WHERE abs_path = ?`,
 		time.Now().Unix(), path,
 	)

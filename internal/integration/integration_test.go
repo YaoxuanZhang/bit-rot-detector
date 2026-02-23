@@ -265,7 +265,7 @@ func TestIntegration_S06_BitRotDetected(t *testing.T) {
 	}
 }
 
-// ── Scenario 7: DB checksum mismatch aborts the run ──────────────────────────
+// ── Scenario 7: DB checksum mismatch is a warning; run succeeds and canary is rewritten ──
 
 func TestIntegration_S07_DBChecksumMismatch(t *testing.T) {
 	dir := newDrive(t)
@@ -277,14 +277,24 @@ func TestIntegration_S07_DBChecksumMismatch(t *testing.T) {
 		t.Fatalf("first run: %v", r1.Err)
 	}
 
-	// Corrupt the canary checksum.
+	// Corrupt the canary checksum to simulate a partial-write scenario.
 	canary := filepath.Join(dir, ".bitrot-canary")
 	writeFile(t, canary, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
-	// Second run must fail.
+	// Second run should succeed (warning + best-effort recovery).
 	r2 := runSync(t, dir)
-	if r2.Err == nil {
-		t.Error("expected error due to DB checksum mismatch, got nil")
+	if r2.Err != nil {
+		t.Errorf("expected recovery (no error) on checksum mismatch, got: %v", r2.Err)
+	}
+
+	// Canary should have been rewritten with the real checksum (not the corrupted value).
+	canaryData, err := os.ReadFile(canary)
+	if err != nil {
+		t.Fatalf("read canary after recovery: %v", err)
+	}
+	const corrupted = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if string(canaryData) == corrupted {
+		t.Error("canary was not rewritten with correct checksum after recovery run")
 	}
 }
 

@@ -273,7 +273,7 @@ func containsStringHelper(s, sub string) bool {
 	return false
 }
 
-func TestRun_DBChecksumMismatch(t *testing.T) {
+func TestRun_DBChecksumMismatch_Warning(t *testing.T) {
 	dir := setupDrive(t)
 
 	// First run: sync and commit, which writes a valid checksum into the canary.
@@ -287,19 +287,31 @@ func TestRun_DBChecksumMismatch(t *testing.T) {
 		t.Fatalf("first run: %v", results[0].Err)
 	}
 
-	// Corrupt the canary checksum so the next run sees a mismatch.
+	// Corrupt the canary checksum to simulate a stale/partial-write scenario.
 	canaryPath := filepath.Join(dir, ".bitrot-canary")
 	if err := os.WriteFile(canaryPath, []byte("deadbeef_invalid_checksum"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Second run: should fail due to DB checksum mismatch.
+	// Second run: should succeed with a warning (best-effort recovery) and
+	// rewrite the canary with the correct checksum on commit.
 	results2, _ := coordinator.Run(context.Background(), []string{dir}, coordinator.Options{
-		RunSync:    true,
-		MaxWorkers: 1,
+		RunSync:         true,
+		ScrubPercentage: 100,
+		ScrubFrequency:  "daily",
+		MaxWorkers:      2,
 	})
-	if results2[0].Err == nil {
-		t.Error("expected error due to DB checksum mismatch")
+	if results2[0].Err != nil {
+		t.Errorf("expected recovery (no error) on checksum mismatch, got: %v", results2[0].Err)
+	}
+
+	// After a successful commit the canary should hold the real checksum (not the corrupted one).
+	canaryData, err := os.ReadFile(canaryPath)
+	if err != nil {
+		t.Fatalf("read canary after recovery: %v", err)
+	}
+	if string(canaryData) == "deadbeef_invalid_checksum" {
+		t.Error("canary was not rewritten with correct checksum after recovery run")
 	}
 }
 

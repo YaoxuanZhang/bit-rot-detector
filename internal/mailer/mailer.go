@@ -140,6 +140,10 @@ func (m *Mailer) send(subject, body string) error {
 		if err := client.StartTLS(&tls.Config{ServerName: m.cfg.Host}); err != nil {
 			return fmt.Errorf("starttls: %w", err)
 		}
+	} else if m.cfg.Username != "" {
+		// Auth credentials are configured but the server does not support
+		// STARTTLS.  Refuse to transmit credentials over a plaintext connection.
+		return fmt.Errorf("smtp: server %s does not support STARTTLS; refusing to send credentials in plaintext", m.cfg.Host)
 	}
 
 	if m.cfg.Username != "" {

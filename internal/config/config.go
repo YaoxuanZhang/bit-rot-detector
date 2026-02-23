@@ -77,7 +77,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("TARGET_DIRECTORY contains no valid paths")
 	}
 
-	smtpPort, _ := strconv.Atoi(envOrDefault("SMTP_PORT", "587"))
+	smtpPortStr := envOrDefault("SMTP_PORT", "587")
+	smtpPort, err := strconv.Atoi(smtpPortStr)
+	if err != nil || smtpPort < 1 || smtpPort > 65535 {
+		return nil, fmt.Errorf("SMTP_PORT must be a valid port number (1-65535), got %q", smtpPortStr)
+	}
 	notifyOnSuccess := strings.ToLower(envOrDefault("NOTIFY_ON_SUCCESS", "true")) == "true"
 
 	scrubPct, err := strconv.ParseFloat(envOrDefault("SCRUB_PERCENTAGE", "1.0"), 64)
