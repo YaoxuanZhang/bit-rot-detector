@@ -9,16 +9,27 @@ LDFLAGS     := -s -w -X main.version=$(VERSION)
 GO          := go
 GOFLAGS     := -trimpath
 
-.PHONY: all build clean test lint vet fmt tidy dev run help
+.PHONY: all build build-go clean clean-ui test lint vet fmt tidy dev run ui ui-dev help
 
-## all: build the binary (default target)
-all: build
+## all: build the UI then the Go binary (default target)
+all: ui build-go
 
-## build: compile a static binary to ./bin/
-build:
+## build: alias for build-go (Go binary only, assumes UI already built)
+build: build-go
+
+## build-go: compile a static Go binary to ./bin/
+build-go:
 	@mkdir -p $(OUTPUT_DIR)
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY) $(CMD_DIR)
 	@echo "Built $(OUTPUT_DIR)/$(BINARY) (version=$(VERSION))"
+
+## ui: install npm deps and build the React UI into internal/api/static/
+ui:
+	cd web && npm install && npm run build
+
+## ui-dev: run Vite dev server with HMR (proxies /api to :8080)
+ui-dev:
+	cd web && npm install && npm run dev
 
 ## build-linux: cross-compile a static Linux amd64 binary
 build-linux:
@@ -64,8 +75,12 @@ tidy:
 clean:
 	rm -rf $(OUTPUT_DIR) coverage.out coverage.html
 
-## dev: build and run the web UI locally (loads .env; default addr :8080)
-dev: build
+## clean-ui: remove web node_modules and Vite cache
+clean-ui:
+	rm -rf web/node_modules web/dist web/.vite
+
+## dev: build Go binary and run the web server locally (loads .env; default addr :8080)
+dev: build-go
 	$(OUTPUT_DIR)/$(BINARY) -web -addr :8080
 
 ## run: run the detector once with go run (loads .env; pass ARGS= for extra flags)

@@ -1,0 +1,123 @@
+/* ── Card Grid ─────────────────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.25rem;
+  padding: 1.5rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── Base card ─────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+  position: relative;
+  overflow: hidden;
+  will-change: transform;
+}
+
+.card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow);
+}
+
+/* ── Blurred background cards when one is expanded ─────────── */
+.card-grid.has-expanded .card:not(.expanded) {
+  filter: blur(2px);
+  pointer-events: none;
+  opacity: 0.5;
+  transition: filter 0.25s ease, opacity 0.25s ease;
+}
+
+/* ── Expanded card overlay ─────────────────────────────────── */
+.card-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 50;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.card.expanded {
+  position: fixed;
+  inset: 1rem;
+  z-index: 100;
+  cursor: default;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+  animation: flipExpand 0.25s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes flipExpand {
+  from {
+    transform: var(--flip-from, scale(0.85));
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.card.collapsing {
+  animation: flipCollapse 0.2s cubic-bezier(0.55, 0, 1, 0.45);
+}
+
+@keyframes flipCollapse {
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: var(--flip-from, scale(0.85));
+    opacity: 0;
+  }
+}
+
+/* ── Card header ────────────────────────────────────────────── */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.card-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.card-close-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  display: none;
+}
+
+.card.expanded .card-close-btn {
+  display: block;
+}
+
+.card-close-btn:hover {
+  color: var(--text);
+  border-color: var(--text);
+  background: var(--surface2);
+}

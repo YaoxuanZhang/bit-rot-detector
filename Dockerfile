@@ -1,34 +1,40 @@
-# ── Stage 1: build a fully static binary ────────────────────────────────────
-FROM golang:1.24-alpine AS builder
+# ── Stage 1: build the React UI ──────────────────────────────
+FROM node:20-alpine AS ui-builder
 
-# Install build tools (git is needed for go-generate; ca-certificates for HTTPS)
+WORKDIR /web
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci --prefer-offline
+
+COPY web/ ./
+# Override outDir to /ui-dist (vite.config.ts default targets ../internal/api/static)
+RUN npm run build -- --outDir /ui-dist
+
+# ── Stage 2: build the Go binary ─────────────────────────────
+FROM golang:1.24-alpine AS go-builder
+
 RUN apk add --no-cache git ca-certificates
 
 WORKDIR /src
 
-# Cache module downloads separately from source code
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the rest of the source tree
 COPY . .
 
-# Build a fully static binary (CGO_ENABLED=0 → no libc dependency)
+# Overlay the built UI
+COPY --from=ui-builder /ui-dist ./internal/api/static/
+
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" \
     -o /out/bit-rot-detector \
     ./cmd/bit-rot-detector
 
-# ── Stage 2: minimal runtime image ───────────────────────────────────────────
+# ── Stage 3: minimal runtime image ───────────────────────────
 FROM scratch
 
-# TLS root certificates (needed for SMTP)
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=go-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=go-builder /out/bit-rot-detector /usr/local/bin/bit-rot-detector
 
-# Copy the static binary
-COPY --from=builder /out/bit-rot-detector /usr/local/bin/bit-rot-detector
-
-# Run as a non-root user for security
 USER 65534:65534
 
 ENTRYPOINT ["/usr/local/bin/bit-rot-detector"]
