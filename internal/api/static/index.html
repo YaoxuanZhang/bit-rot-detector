@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bit Rot Detector</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --border:  #2e3147;
+      --accent:  #6366f1;
+      --ok:      #22c55e;
+      --warn:    #f59e0b;
+      --err:     #ef4444;
+      --text:    #e2e8f0;
+      --muted:   #6b7280;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header .badge {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+    }
+
+    main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; }
+
+    .toolbar {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 0.5rem 1.25rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    button:hover { background: var(--border); }
+    button.primary { background: var(--accent); border-color: var(--accent); }
+    button.primary:hover { background: #4f52d9; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .status-bar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .status-bar .item { display: flex; flex-direction: column; gap: 0.2rem; }
+    .status-bar .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .status-bar .value { font-size: 0.95rem; font-weight: 500; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .dot.ok   { background: var(--ok); }
+    .dot.warn { background: var(--warn); }
+    .dot.err  { background: var(--err); }
+    .dot.idle { background: var(--muted); }
+    .dot.running { background: var(--accent); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+    .drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
+
+    .drive-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .drive-card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .drive-card .path { font-size: 0.75rem; color: var(--muted); margin-bottom: 1rem; word-break: break-all; }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .stat { background: var(--bg); border-radius: 6px; padding: 0.5rem 0.75rem; }
+    .stat .slab { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .stat .sval { font-size: 1rem; font-weight: 600; margin-top: 0.1rem; }
+
+    .error-box {
+      margin-top: 0.75rem;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      color: var(--err);
+    }
+
+    .corrupt-list {
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+    }
+    .corrupt-list summary { cursor: pointer; color: var(--err); }
+    .corrupt-list ul { margin-top: 0.5rem; padding-left: 1.25rem; }
+    .corrupt-list li { margin-bottom: 0.25rem; word-break: break-all; color: var(--text); }
+
+    .disk-bar {
+      margin-top: 0.75rem;
+    }
+    .disk-bar .bar-label { font-size: 0.7rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .disk-bar .track { background: var(--bg); border-radius: 999px; height: 6px; overflow: hidden; }
+    .disk-bar .fill  { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.4s; }
+    .disk-bar .fill.warn { background: var(--warn); }
+    .disk-bar .fill.err  { background: var(--err); }
+
+    .empty { color: var(--muted); font-size: 0.9rem; padding: 2rem 0; }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 9999; }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.875rem;
+      animation: slideIn 0.2s ease;
+      max-width: 360px;
+    }
+    .toast.ok   { border-left: 3px solid var(--ok); }
+    .toast.err  { border-left: 3px solid var(--err); }
+    @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  </style>
+</head>
+<body>
+  <header>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+    <h1>Bit Rot Detector</h1>
+    <span class="badge">v1</span>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <button class="primary" id="btn-sync" onclick="triggerOp('sync')">⟳ Sync All</button>
+      <button id="btn-scrub" onclick="triggerOp('scrub')">🔍 Scrub All</button>
+      <button id="btn-refresh" onclick="refresh()">↺ Refresh</button>
+    </div>
+
+    <div class="status-bar" id="status-bar">
+      <div class="item">
+        <span class="label">State</span>
+        <span class="value" id="state-val"><span class="dot idle"></span>Loading…</span>
+      </div>
+      <div class="item">
+        <span class="label">Last Run</span>
+        <span class="value" id="last-run-val">—</span>
+      </div>
+      <div class="item">
+        <span class="label">Duration</span>
+        <span class="value" id="duration-val">—</span>
+      </div>
+      <div class="item">
+        <span class="label">Drives</span>
+        <span class="value" id="drive-count-val">—</span>
+      </div>
+    </div>
+
+    <div class="drives" id="drives-grid">
+      <p class="empty">Loading drive data…</p>
+    </div>
+  </main>
+
+  <div class="toast-container" id="toasts"></div>
+
+  <script>
+    let pollTimer = null;
+
+    async function apiFetch(path, method = 'GET') {
+      const r = await fetch(path, { method });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
+
+    function fmtBytes(b) {
+      if (!b) return '—';
+      const units = ['B','KB','MB','GB','TB','PB'];
+      let i = 0;
+      while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
+      return `${b.toFixed(1)} ${units[i]}`;
+    }
+
+    function fmtTime(iso) {
+      if (!iso || iso === '0001-01-01T00:00:00Z') return 'Never';
+      const d = new Date(iso);
+      return d.toLocaleString();
+    }
+
+    function toast(msg, type = 'ok') {
+      const c = document.getElementById('toasts');
+      const el = document.createElement('div');
+      el.className = `toast ${type}`;
+      el.textContent = msg;
+      c.appendChild(el);
+      setTimeout(() => el.remove(), 4000);
+    }
+
+    function setButtons(disabled) {
+      ['btn-sync','btn-scrub','btn-refresh'].forEach(id => {
+        document.getElementById(id).disabled = disabled;
+      });
+    }
+
+    function renderStatus(st) {
+      const stateEl = document.getElementById('state-val');
+      if (st.running) {
+        stateEl.innerHTML = `<span class="spinner"></span><span class="dot running"></span>Running`;
+        setButtons(true);
+        schedulePoll(1500);
+      } else {
+        const hasErr = (st.drives || []).some(d => d.err);
+        const hasBitRot = (st.drives || []).some(d => d.scrub_result && d.scrub_result.files_corrupted && d.scrub_result.files_corrupted.length > 0);
+        let dot, label;
+        if (hasErr)      { dot = 'err';  label = 'Error'; }
+        else if (hasBitRot) { dot = 'err'; label = 'Bit Rot Detected'; }
+        else if (st.last_run && st.last_run !== '0001-01-01T00:00:00Z') { dot = 'ok'; label = 'OK'; }
+        else { dot = 'idle'; label = 'Idle'; }
+        stateEl.innerHTML = `<span class="dot ${dot}"></span>${label}`;
+        setButtons(false);
+        clearTimeout(pollTimer);
+      }
+      document.getElementById('last-run-val').textContent = fmtTime(st.last_run);
+      document.getElementById('duration-val').textContent = st.duration || '—';
+      document.getElementById('drive-count-val').textContent = (st.drives || []).length;
+      renderDrives(st.drives || []);
+    }
+
+    function renderDrives(drives) {
+      const grid = document.getElementById('drives-grid');
+      if (!drives.length) {
+        grid.innerHTML = '<p class="empty">No drives configured.</p>';
+        return;
+      }
+      grid.innerHTML = drives.map(d => {
+        const sync  = d.sync_result  || {};
+        const scrub = d.scrub_result || {};
+        const h     = d.health       || {};
+
+        let diskBar = '';
+        if (h.total_space) {
+          const pct = Math.round((h.used_space / h.total_space) * 100);
+          const cls = pct > 90 ? 'err' : pct > 75 ? 'warn' : '';
+          diskBar = `
+            <div class="disk-bar">
+              <div class="bar-label">Disk usage: ${fmtBytes(h.used_space)} / ${fmtBytes(h.total_space)} (${pct}%)</div>
+              <div class="track"><div class="fill ${cls}" style="width:${pct}%"></div></div>
+            </div>`;
+        }
+
+        let corruptBlock = '';
+        if (scrub.files_corrupted && scrub.files_corrupted.length) {
+          const items = scrub.files_corrupted.map(p => `<li>${p}</li>`).join('');
+          corruptBlock = `<details class="corrupt-list"><summary>⚠ ${scrub.files_corrupted.length} corrupted file(s)</summary><ul>${items}</ul></details>`;
+        }
+
+        let errBlock = d.err ? `<div class="error-box">${d.err}</div>` : '';
+
+        return `
+          <div class="drive-card">
+            <h2>${d.drive}</h2>
+            <div class="path">${d.path}</div>
+            <div class="stat-grid">
+              <div class="stat"><div class="slab">Scanned</div><div class="sval">${sync.files_scanned ?? '—'}</div></div>
+              <div class="stat"><div class="slab">Added</div><div class="sval">${sync.files_added ?? '—'}</div></div>
+              <div class="stat"><div class="slab">Modified</div><div class="sval">${sync.files_modified ?? '—'}</div></div>
+              <div class="stat"><div class="slab">Removed</div><div class="sval">${sync.files_removed ?? '—'}</div></div>
+              <div class="stat"><div class="slab">Scrubbed</div><div class="sval">${scrub.files_validated ?? '—'}</div></div>
+              <div class="stat"><div class="slab">Corrupted</div><div class="sval" style="color:${(scrub.files_corrupted||[]).length > 0 ? 'var(--err)' : 'inherit'}">${(scrub.files_corrupted||[]).length}</div></div>
+            </div>
+            ${diskBar}
+            ${corruptBlock}
+            ${errBlock}
+          </div>`;
+      }).join('');
+    }
+
+    function schedulePoll(ms) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(refresh, ms);
+    }
+
+    async function refresh() {
+      try {
+        const st = await apiFetch('/api/status');
+        renderStatus(st);
+      } catch(e) {
+        toast(`Refresh failed: ${e.message}`, 'err');
+      }
+    }
+
+    async function triggerOp(op) {
+      setButtons(true);
+      const stateEl = document.getElementById('state-val');
+      stateEl.innerHTML = `<span class="spinner"></span><span class="dot running"></span>Running ${op}…`;
+      try {
+        const st = await apiFetch(`/api/${op}`, 'POST');
+        renderStatus(st);
+        const hasErr    = (st.drives||[]).some(d => d.err);
+        const hasBitRot = (st.drives||[]).some(d => d.scrub_result && (d.scrub_result.files_corrupted||[]).length > 0);
+        if (hasBitRot) toast('⚠ Bit rot detected!', 'err');
+        else if (hasErr) toast(`${op} completed with errors`, 'err');
+        else toast(`${op} completed successfully`, 'ok');
+      } catch(e) {
+        toast(`${op} failed: ${e.message}`, 'err');
+        setButtons(false);
+      }
+    }
+
+    // Initial load.
+    refresh();
+  </script>
+</body>
+</html>

@@ -61,6 +61,10 @@ func NewSyncer(h domain.Hasher, numWorkers int) *Syncer {
 // SyncDirectory walks rootPath, compares each file against the repository,
 // and records new, modified, moved, and deleted files.
 func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain.Repository) (*domain.SyncResult, error) {
+	// Respect cancellation before any work begins.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	slog.Info("sync started", "path", rootPath, "workers", s.numWorkers)
 
 	// Load existing records from the shadow DB.
@@ -235,7 +239,11 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 	}
 
 	// Wait for walker.
-	if werr := <-walkErr; werr != nil && werr != context.Canceled {
+	if werr := <-walkErr; werr != nil {
+		if ctx.Err() != nil {
+			// Walk was stopped by context cancellation; propagate as cancellation.
+			return result, ctx.Err()
+		}
 		return result, fmt.Errorf("walk: %w", werr)
 	}
 
@@ -265,6 +273,10 @@ func (s *Syncer) SyncDirectory(ctx context.Context, rootPath string, repo domain
 
 // ScrubFiles re-verifies a percentage of files to detect bit rot.
 func (s *Syncer) ScrubFiles(ctx context.Context, repo domain.Repository, percentage float64, minAgeDays *int) (*domain.ScrubResult, error) {
+	// Respect cancellation before any work begins.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	slog.Info("scrub started", "percentage", percentage)
 
 	files, err := repo.GetFilesForScrub(ctx, percentage, minAgeDays)

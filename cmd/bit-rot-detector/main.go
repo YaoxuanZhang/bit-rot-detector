@@ -1,5 +1,18 @@
 // Command bit-rot-detector detects silent file corruption (bit rot) using
 // BLAKE3 hashing with an atomic Shadow-DB swap for crash safety.
+//
+// Usage:
+//
+//	bit-rot-detector [flags]
+//
+// Flags:
+//
+//	-sync         run sync phase only
+//	-scrub        run scrub phase only
+//	-test-email   send a test email and exit
+//	-watch        watch directories for changes and re-run on each change
+//	-web          start the HTTP status/control UI
+//	-addr string  HTTP listen address when -web is set (default ":8080")
 package main
 
 import (
@@ -9,12 +22,15 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/api"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/config"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/coordinator"
 	"github.com/YaoxuanZhang/bit-rot-detector/internal/mailer"
+	"github.com/YaoxuanZhang/bit-rot-detector/internal/watcher"
 )
 
 func main() {
@@ -29,6 +45,9 @@ func run() int {
 	syncOnly      := flag.Bool("sync", false, "run sync operation only")
 	scrubOnly     := flag.Bool("scrub", false, "run scrub operation only")
 	testEmail     := flag.Bool("test-email", false, "send test email and exit")
+	watchMode     := flag.Bool("watch", false, "watch directories for changes and re-run on each change")
+	webMode       := flag.Bool("web", false, "start the HTTP status/control UI")
+	listenAddr    := flag.String("addr", ":8080", "HTTP listen address (used with -web)")
 	flag.Parse()
 
 	// ── Logging ──────────────────────────────────────────────────────────────
@@ -76,6 +95,42 @@ func run() int {
 		ScrubPercentage: cfg.ScrubPercentage,
 		ScrubFrequency:  cfg.ScrubFrequency,
 		MaxWorkers:      cfg.MaxWorkers,
+	}
+
+	// ── Web UI mode ───────────────────────────────────────────────────────────
+	if *webMode {
+		srv := api.New(cfg.TargetPaths, opts)
+		slog.Info("starting web UI", "addr", *listenAddr)
+		if err := srv.ListenAndServe(ctx, *listenAddr); err != nil {
+			slog.Error("web server error", "err", err)
+			return 1
+		}
+		return 0
+	}
+
+	// ── Watch mode ────────────────────────────────────────────────────────────
+	if *watchMode {
+		onChange := func(watchCtx context.Context, changed []string) {
+			slog.Info("watcher: resync triggered", "drives", changed)
+			results, duration := coordinator.Run(watchCtx, changed, opts)
+			errors := coordinator.CollectErrors(results)
+			m.SendUnifiedReport(
+				coordinator.ToMailerSyncEntries(results),
+				coordinator.ToMailerScrubEntries(results),
+				coordinator.ToHealthSlice(results),
+				errors,
+				duration,
+			)
+		}
+		w, err := watcher.New(cfg.TargetPaths, 3*time.Second, onChange)
+		if err != nil {
+			slog.Error("watcher init failed", "err", err)
+			return 1
+		}
+		defer w.Close()
+		slog.Info("watching for changes", "paths", cfg.TargetPaths)
+		w.Run(ctx)
+		return 0
 	}
 
 	// ── Run ───────────────────────────────────────────────────────────────────
