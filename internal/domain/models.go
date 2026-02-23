@@ -43,40 +43,40 @@ type FileRecord struct {
 // one directory tree.
 type SyncResult struct {
 	// FilesScanned is the total number of files visited by the walker.
-	FilesScanned int
+	FilesScanned int `json:"files_scanned"`
 
 	// FilesAdded is the number of new files inserted into the database.
-	FilesAdded int
+	FilesAdded int `json:"files_added"`
 
 	// FilesModified is the number of files whose size or mtime changed.
-	FilesModified int
+	FilesModified int `json:"files_modified"`
 
 	// FilesMoved is the number of files detected as relocated (same
 	// size+mtime at a new path).
-	FilesMoved int
+	FilesMoved int `json:"files_moved"`
 
 	// FilesRemoved is the number of database entries deleted because the
 	// corresponding file no longer exists on disk.
-	FilesRemoved int
+	FilesRemoved int `json:"files_removed"`
 
 	// Errors contains human-readable descriptions of non-fatal errors
 	// encountered during the sync (e.g. permission denied).
-	Errors []string
+	Errors []string `json:"errors,omitempty"`
 }
 
 // ScrubResult holds the statistics gathered during a single scrub operation.
 type ScrubResult struct {
 	// FilesValidated is the number of files whose hash matched the stored value.
-	FilesValidated int
+	FilesValidated int `json:"files_validated"`
 
 	// FilesCorrupted contains the absolute paths of files whose current hash
 	// differs from the stored value – these are potential bit-rot events.
-	FilesCorrupted []string
+	FilesCorrupted []string `json:"files_corrupted,omitempty"`
 
 	// Errors contains human-readable descriptions of non-fatal errors
 	// encountered during the scrub (e.g. file disappeared between sync and
 	// scrub).
-	Errors []string
+	Errors []string `json:"errors,omitempty"`
 }
 
 // DriveHealth holds disk-usage and SMART statistics for a single drive.
@@ -84,31 +84,31 @@ type ScrubResult struct {
 // value.
 type DriveHealth struct {
 	// DriveName is a human-readable label derived from the mount-point base name.
-	DriveName string
+	DriveName string `json:"drive_name"`
 
 	// TotalSpace is the total capacity of the filesystem in bytes.
-	TotalSpace uint64
+	TotalSpace uint64 `json:"total_space"`
 
 	// UsedSpace is the number of bytes currently in use.
-	UsedSpace uint64
+	UsedSpace uint64 `json:"used_space"`
 
 	// FreeSpace is the number of bytes available to unprivileged users.
-	FreeSpace uint64
+	FreeSpace uint64 `json:"free_space"`
 
 	// Temperature is the drive temperature in degrees Celsius, or nil if
 	// SMART data is unavailable.
-	Temperature *int
+	Temperature *int `json:"temperature,omitempty"`
 
 	// SmartStatus is a short human-readable SMART health summary
 	// (e.g. "PASSED", "FAILED", "UNKNOWN").
-	SmartStatus string
+	SmartStatus string `json:"smart_status,omitempty"`
 
 	// SmartErrors contains any SMART error log entries detected.
-	SmartErrors []string
+	SmartErrors []string `json:"smart_errors,omitempty"`
 
 	// IsRotational is true when the drive is backed by a spinning platter
 	// (HDD), as determined by reading /sys/block/<dev>/queue/rotational.
-	IsRotational bool
+	IsRotational bool `json:"is_rotational"`
 }
 
 // WorkItem is a unit of work sent from the directory-walker goroutine (the

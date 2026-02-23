@@ -4,13 +4,14 @@
 //
 // # Endpoints
 //
-//   - GET  /api/status    – last-run summary for all drives
-//   - GET  /api/drives    – configured drive paths and health
-//   - GET  /api/progress  – Server-Sent Events stream of live scan progress
-//   - GET  /api/history   – historical run records from each drive's database
-//   - POST /api/sync      – trigger a sync operation (non-blocking; returns 202 Accepted)
-//   - POST /api/scrub     – trigger a scrub operation (non-blocking; returns 202 Accepted)
-//   - GET  /              – single-page web UI
+//   - GET  /api/status     – last-run summary for all drives
+//   - GET  /api/drives     – configured drive paths and health
+//   - GET  /api/progress   – Server-Sent Events stream of live scan progress
+//   - GET  /api/history    – historical run records from each drive's database
+//   - POST /api/sync       – trigger a sync operation (non-blocking; returns 202 Accepted)
+//   - POST /api/scrub      – trigger a scrub operation (non-blocking; returns 202 Accepted)
+//   - POST /api/test-email – send a test email via the configured mailer
+//   - GET  /               – single-page web UI
 package api
 
 import (
@@ -66,6 +67,12 @@ func (h *progressHub) publish(ev domain.ProgressEvent) {
 	}
 }
 
+// EmailSender is a minimal interface satisfied by *mailer.Mailer.
+// It allows the API server to be tested without a real SMTP connection.
+type EmailSender interface {
+	SendTestEmail() error
+}
+
 // Server is the HTTP API server.  Create one with [New], then start it with
 // [Server.ListenAndServe].
 type Server struct {
@@ -76,6 +83,7 @@ type Server struct {
 	status *Status
 	hub    *progressHub
 	mux    *http.ServeMux
+	mailer EmailSender // optional; set via SetMailer
 }
 
 // Status holds the most recent aggregated scan results returned by the server.
