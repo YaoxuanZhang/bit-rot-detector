@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api, type StatusResponse, type ProgressEvent as ProgEvt } from '../lib/api'
 import { useSSE } from '../lib/sse'
-import { formatDate, formatRelative, formatDuration, formatNumber } from '../lib/format'
+import { formatDate, formatRelative, formatNumber } from '../lib/format'
 
 interface Props {
   status: StatusResponse | null
