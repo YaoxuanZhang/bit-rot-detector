@@ -182,6 +182,9 @@ func TestPostScrub_Returns202(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d", rr.Code)
 	}
+	// Wait for the background scrub goroutine to finish so that t.TempDir()
+	// cleanup does not race with the still-running coordinator.
+	pollStatus(t, srv)
 }
 
 func TestConflictWhenAlreadyRunning(t *testing.T) {

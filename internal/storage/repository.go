@@ -54,9 +54,11 @@ func Open(dir string) (*Repository, error) {
 	prodPath := filepath.Join(dir, prodDBName)
 	shadowPath := prodPath + shadowSuffix
 
-	// Remove any leftover shadow file from a previous crashed run.
-	if err := os.Remove(shadowPath); err != nil && !os.IsNotExist(err) {
-		slog.Warn("could not remove stale shadow DB", "path", shadowPath, "err", err)
+	// Remove any leftover shadow file (and associated WAL/SHM) from a previous crashed run.
+	for _, p := range []string{shadowPath, shadowPath + "-wal", shadowPath + "-shm"} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			slog.Warn("could not remove stale shadow DB file", "path", p, "err", err)
+		}
 	}
 
 	// Copy production DB to shadow (creates shadow if production doesn't exist).
@@ -87,15 +89,28 @@ func Open(dir string) (*Repository, error) {
 }
 
 // openSQLite opens (or creates) a SQLite database at path.
+// DELETE journal mode is used instead of WAL so that no additional sidecar
+// files (-wal, -shm) are created; this keeps the shadow-swap copy operation
+// simple and correct.
 func openSQLite(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(1) // SQLite is single-writer
-	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA integrity_check;"); err != nil {
+	if _, err := db.Exec("PRAGMA journal_mode=DELETE;"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite pragma: %w", err)
+	}
+	// Read and assert the integrity_check result (not just exec-and-discard).
+	var ic string
+	if err := db.QueryRow("PRAGMA integrity_check;").Scan(&ic); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite integrity_check: %w", err)
+	}
+	if ic != "ok" {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite integrity_check failed: %s", ic)
 	}
 	return db, nil
 }

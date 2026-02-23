@@ -82,26 +82,20 @@ func (w *Watcher) addTree(root string) error {
 
 // Run starts the event loop.  It blocks until ctx is cancelled.
 // Newly created sub-directories are automatically added to the watch set.
+//
+// All state (pending map, timer) is owned exclusively by this goroutine, so
+// no mutex is needed and there is no data race between the event loop and the
+// debounce callback.
 func (w *Watcher) Run(ctx context.Context) {
-	// pending tracks which root directories have pending events so that the
-	// callback receives only the affected trees.
+	// pending tracks which root directories have received events since the
+	// last callback invocation.
 	pending := make(map[string]struct{})
-	var timer *time.Timer
 
-	fire := func() {
-		if len(pending) == 0 {
-			return
-		}
-		changed := make([]string, 0, len(pending))
-		for root := range pending {
-			changed = append(changed, root)
-		}
-		for k := range pending {
-			delete(pending, k)
-		}
-		slog.Info("watcher: changes detected, triggering resync", "drives", changed)
-		w.fn(ctx, changed)
-	}
+	// timer / timerC implement a reset-able debounce entirely within this
+	// goroutine.  timerC is nil when no timer is armed, which causes select
+	// to skip that case.
+	var timer *time.Timer
+	var timerC <-chan time.Time
 
 	for {
 		select {
@@ -110,6 +104,19 @@ func (w *Watcher) Run(ctx context.Context) {
 				timer.Stop()
 			}
 			return
+
+		case <-timerC:
+			// Debounce window elapsed — fire callback in this goroutine (no race).
+			if len(pending) > 0 {
+				changed := make([]string, 0, len(pending))
+				for root := range pending {
+					changed = append(changed, root)
+				}
+				clear(pending) // Go 1.21+: reset map without reallocating
+				slog.Info("watcher: changes detected, triggering resync", "drives", changed)
+				w.fn(ctx, changed)
+			}
+			timerC = nil
 
 		case event, ok := <-w.fw.Events:
 			if !ok {
@@ -133,11 +140,18 @@ func (w *Watcher) Run(ctx context.Context) {
 			root := w.rootFor(event.Name)
 			pending[root] = struct{}{}
 
-			// Reset the debounce timer.
+			// Reset the debounce timer.  Stop the old one and drain its channel
+			// so the previous tick (if any) does not fire unexpectedly.
 			if timer != nil {
-				timer.Stop()
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 			}
-			timer = time.AfterFunc(w.debounce, fire)
+			timer = time.NewTimer(w.debounce)
+			timerC = timer.C
 
 		case err, ok := <-w.fw.Errors:
 			if !ok {

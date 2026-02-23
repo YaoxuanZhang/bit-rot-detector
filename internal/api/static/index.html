@@ -205,11 +205,43 @@
 
   <script>
     let pollTimer = null;
+    let wasRunning = false;
+
+    const FETCH_TIMEOUT_MS = 15000; // 15 s hard timeout for all API calls
+    const ALLOWED_OPS = new Set(['sync', 'scrub']); // allowlist for triggerOp
+
+    // Escape HTML to prevent XSS from server-supplied file paths and error strings.
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     async function apiFetch(path, method = 'GET') {
-      const r = await fetch(path, { method });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+      const ctrl = new AbortController();
+      const tid  = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const r = await fetch(path, { method, signal: ctrl.signal });
+        clearTimeout(tid);
+        if (r.status === 409) {
+          const body = await r.json().catch(() => ({}));
+          const e = new Error(body.error || 'an operation is already running');
+          e.status = 409;
+          throw e;
+        }
+        if (!r.ok) {
+          const e = new Error(`HTTP ${r.status}`);
+          e.status = r.status;
+          throw e;
+        }
+        return r.json();
+      } catch (e) {
+        clearTimeout(tid);
+        throw e;
+      }
     }
 
     function fmtBytes(b) {
@@ -243,21 +275,30 @@
 
     function renderStatus(st) {
       const stateEl = document.getElementById('state-val');
+      const justFinished = wasRunning && !st.running;
+      wasRunning = st.running;
+
       if (st.running) {
         stateEl.innerHTML = `<span class="spinner"></span><span class="dot running"></span>Running`;
         setButtons(true);
         schedulePoll(1500);
       } else {
-        const hasErr = (st.drives || []).some(d => d.err);
+        const hasErr    = (st.drives || []).some(d => d.err);
         const hasBitRot = (st.drives || []).some(d => d.scrub_result && d.scrub_result.files_corrupted && d.scrub_result.files_corrupted.length > 0);
         let dot, label;
-        if (hasErr)      { dot = 'err';  label = 'Error'; }
-        else if (hasBitRot) { dot = 'err'; label = 'Bit Rot Detected'; }
+        if (hasErr)         { dot = 'err';  label = 'Error'; }
+        else if (hasBitRot) { dot = 'err';  label = 'Bit Rot Detected'; }
         else if (st.last_run && st.last_run !== '0001-01-01T00:00:00Z') { dot = 'ok'; label = 'OK'; }
-        else { dot = 'idle'; label = 'Idle'; }
+        else                { dot = 'idle'; label = 'Idle'; }
         stateEl.innerHTML = `<span class="dot ${dot}"></span>${label}`;
         setButtons(false);
         clearTimeout(pollTimer);
+
+        if (justFinished) {
+          if (hasBitRot)   toast('⚠ Bit rot detected!', 'err');
+          else if (hasErr) toast('Operation completed with errors', 'err');
+          else             toast('Operation completed successfully', 'ok');
+        }
       }
       document.getElementById('last-run-val').textContent = fmtTime(st.last_run);
       document.getElementById('duration-val').textContent = st.duration || '—';
@@ -289,16 +330,16 @@
 
         let corruptBlock = '';
         if (scrub.files_corrupted && scrub.files_corrupted.length) {
-          const items = scrub.files_corrupted.map(p => `<li>${p}</li>`).join('');
+          const items = scrub.files_corrupted.map(p => `<li>${esc(p)}</li>`).join('');
           corruptBlock = `<details class="corrupt-list"><summary>⚠ ${scrub.files_corrupted.length} corrupted file(s)</summary><ul>${items}</ul></details>`;
         }
 
-        let errBlock = d.err ? `<div class="error-box">${d.err}</div>` : '';
+        const errBlock = d.err ? `<div class="error-box">${esc(d.err)}</div>` : '';
 
         return `
           <div class="drive-card">
-            <h2>${d.drive}</h2>
-            <div class="path">${d.path}</div>
+            <h2>${esc(d.drive)}</h2>
+            <div class="path">${esc(d.path)}</div>
             <div class="stat-grid">
               <div class="stat"><div class="slab">Scanned</div><div class="sval">${sync.files_scanned ?? '—'}</div></div>
               <div class="stat"><div class="slab">Added</div><div class="sval">${sync.files_added ?? '—'}</div></div>
@@ -329,20 +370,26 @@
     }
 
     async function triggerOp(op) {
+      if (!ALLOWED_OPS.has(op)) {
+        console.error('triggerOp: unexpected op', op);
+        return;
+      }
       setButtons(true);
       const stateEl = document.getElementById('state-val');
-      stateEl.innerHTML = `<span class="spinner"></span><span class="dot running"></span>Running ${op}…`;
+      stateEl.innerHTML = `<span class="spinner"></span><span class="dot running"></span>Starting ${esc(op)}…`;
       try {
-        const st = await apiFetch(`/api/${op}`, 'POST');
-        renderStatus(st);
-        const hasErr    = (st.drives||[]).some(d => d.err);
-        const hasBitRot = (st.drives||[]).some(d => d.scrub_result && (d.scrub_result.files_corrupted||[]).length > 0);
-        if (hasBitRot) toast('⚠ Bit rot detected!', 'err');
-        else if (hasErr) toast(`${op} completed with errors`, 'err');
-        else toast(`${op} completed successfully`, 'ok');
-      } catch(e) {
-        toast(`${op} failed: ${e.message}`, 'err');
-        setButtons(false);
+        // POST returns 202 Accepted immediately; poll /api/status for completion.
+        await apiFetch(`/api/${op}`, 'POST');
+        wasRunning = true;
+        schedulePoll(500);
+      } catch (e) {
+        if (e.status === 409) {
+          toast(e.message, 'err');
+        } else {
+          toast(`${op} failed: ${e.message}`, 'err');
+        }
+        // Re-fetch current status to restore correct button states.
+        refresh();
       }
     }
 
